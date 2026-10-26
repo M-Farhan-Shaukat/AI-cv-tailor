@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "laravel-boost": {
+            "command": "/usr/bin/php8.4",
+            "args": [
+                "/home/farhanrajpoot/Desktop/resume-tailor-ats/artisan",
+                "boost:mcp"
+            ]
+        }
+    }
+}
