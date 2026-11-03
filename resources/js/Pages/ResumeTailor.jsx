@@ -28,6 +28,9 @@ const errorMessage = (err, fallback) => {
     if (err?.response?.status === 429) {
         return 'Too many requests. Please wait a minute and try again.';
     }
+    if (!err?.response) {
+        return 'The connection to the server was lost. Please try again with a shorter job description.';
+    }
     return err?.response?.data?.message || err?.message || fallback;
 };
 
@@ -417,11 +420,14 @@ export default function ResumeTailor({ seo }) {
                                             {result.job_title && <span className="badge rounded-pill text-bg-light border">{result.job_title}</span>}
                                         </div>
                                         <h2 className="h4 fw-bold mb-2">Your ATS-optimized resume is ready</h2>
-                                        <p className="text-muted mb-4">
+                                        <p className={`text-muted ${result.tailored_score.cap_reason ? 'mb-2' : 'mb-4'}`}>
                                             Now matching <strong>{result.tailored_score.matched.length}</strong> of{' '}
                                             <strong>{result.tailored_score.matched.length + result.tailored_score.missing.length}</strong> job keywords, including{' '}
                                             <strong>{result.tailored_score.required_matched}/{result.tailored_score.required_total}</strong> required ones.
                                         </p>
+                                        {result.tailored_score.cap_reason && (
+                                            <p className="text-muted small mb-4"><i className="bi bi-info-circle me-1"></i>{result.tailored_score.cap_reason}</p>
+                                        )}
                                         <div className="d-flex flex-wrap gap-2 rt-actions">
                                             <a className="btn btn-success rt-btn-success px-4" href={result.download_url}>
                                                 <i className="bi bi-file-earmark-arrow-down me-2"></i>Download PDF

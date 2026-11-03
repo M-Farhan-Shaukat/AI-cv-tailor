@@ -56,6 +56,12 @@ class ResumeTailor
             ->values()
             ->all();
 
+        if ($addedKeywords !== [] && $tailored['score'] > AtsScorer::ADDED_KEYWORD_MAX_SCORE) {
+            $tailored['score'] = AtsScorer::ADDED_KEYWORD_MAX_SCORE;
+            $tailored['cap_reason'] = 'Capped at '.AtsScorer::ADDED_KEYWORD_MAX_SCORE.' because '
+                .count($addedKeywords).' keywords were added by the tailoring step.';
+        }
+
         return [
             'job_title' => $jobTitle,
             'keywords' => $keywords,

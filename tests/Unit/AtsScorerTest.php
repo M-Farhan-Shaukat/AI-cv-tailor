@@ -73,4 +73,36 @@ class AtsScorerTest extends TestCase
     {
         $this->assertSame(0, (new AtsScorer)->scoreKeywords('anything', [])['score']);
     }
+
+    public function test_keywords_only_in_the_skills_section_get_partial_credit(): void
+    {
+        $report = (new AtsScorer)->scoreKeywords(
+            'Built REST APIs with Laravel.',
+            [
+                ['term' => 'Laravel', 'importance' => 'required'],
+                ['term' => 'Docker', 'importance' => 'required'],
+            ],
+            'Docker, Kubernetes',
+        );
+
+        $this->assertSame(93, $report['score']);
+        $this->assertSame(1, $report['skills_only']);
+        $this->assertSame(['Docker'], $report['skills_only_terms']);
+        $this->assertTrue($report['matched'][0]['in_context']);
+        $this->assertFalse($report['matched'][1]['in_context']);
+    }
+
+    public function test_a_listed_only_keyword_caps_the_overall_score_at_95(): void
+    {
+        $resume = "Jane Doe\njane@example.com | +1 555 123 4567\nSummary\nLaravel Developer skilled in PHP MySQL Git REST Docker AWS Redis React Vue.\nExperience\nBuilt apps.\nSkills\nKubernetes\nEducation\nBSc";
+
+        $report = (new AtsScorer)->score($resume, [
+            ['term' => 'Laravel'], ['term' => 'PHP'], ['term' => 'MySQL'], ['term' => 'Git'],
+            ['term' => 'REST'], ['term' => 'Docker'], ['term' => 'AWS'], ['term' => 'Redis'],
+            ['term' => 'React'], ['term' => 'Vue'], ['term' => 'Kubernetes'],
+        ], 'Laravel Developer');
+
+        $this->assertSame(1, $report['skills_only']);
+        $this->assertSame(95, $report['score']);
+    }
 }

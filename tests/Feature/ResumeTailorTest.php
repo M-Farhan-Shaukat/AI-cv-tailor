@@ -34,16 +34,53 @@ class ResumeTailorTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('job_title', 'Laravel Developer')
             ->assertJsonPath('original_score.breakdown.keywords.score', 30)
-            ->assertJsonPath('tailored_score.breakdown.keywords.score', 90)
+            ->assertJsonPath('tailored_score.breakdown.keywords.score', 86)
             ->assertJsonPath('tailored_score.breakdown.job_title.score', 100)
-            ->assertJsonPath('tailored_score.missing.0.term', 'Docker');
+            ->assertJsonPath('tailored_score.missing.0.term', 'Docker')
+            ->assertJsonPath('tailored_score.skills_only', 1);
 
         $this->assertGreaterThan($response->json('original_score.score'), $response->json('tailored_score.score'));
+        $this->assertLessThanOrEqual(95, $response->json('tailored_score.score'));
         $this->assertSame(['REST APIs', 'software development'], array_column($response->json('added_keywords'), 'term'));
 
         $tailored = TailoredResume::firstOrFail();
         $this->assertSame($response->json('tailored_score.score'), $tailored->match_score);
         $this->assertSame($response->json('original_score.score'), $tailored->original_score);
+        $this->assertStringStartsWith('/download/', $response->json('download_url'));
+        $this->assertStringStartsWith('/tailor/', $response->json('refine_url'));
+        $this->assertStringContainsString('token=', $response->json('refine_url'));
+    }
+
+    public function test_tailored_score_is_capped_when_the_tool_adds_keywords(): void
+    {
+        $keywordReply = $this->groqReply([
+            'job_title' => 'Laravel Developer',
+            'keywords' => [
+                ['term' => 'Laravel', 'aliases' => [], 'category' => 'hard_skill', 'importance' => 'required'],
+                ['term' => 'REST APIs', 'aliases' => [], 'category' => 'hard_skill', 'importance' => 'required'],
+                ['term' => 'Docker', 'aliases' => [], 'category' => 'hard_skill', 'importance' => 'required'],
+            ],
+        ]);
+
+        $resume = $this->tailoredResume();
+        $resume['contact']['phone'] = '+1 555 123 4567';
+        $resume['summary'] = 'Laravel Developer building REST APIs with Docker.';
+        $resume['skills'] = [['category' => 'Frameworks', 'items' => ['Laravel']]];
+        $resume['experience'] = [
+            ['title' => 'Developer', 'company' => 'Acme', 'start_date' => 'Jan 2022', 'end_date' => 'Present', 'bullets' => ['Built REST APIs in Laravel with Docker.']],
+        ];
+
+        Http::fakeSequence('api.groq.test/*')
+            ->push($keywordReply)
+            ->push($this->groqReply($resume));
+
+        $response = $this->postJson('/tailor', $this->tailorPayload())->assertOk();
+
+        $response->assertJsonPath('tailored_score.breakdown.keywords.score', 100)
+            ->assertJsonPath('tailored_score.score', 95)
+            ->assertJsonPath('tailored_score.cap_reason', 'Capped at 95 because 2 keywords were added by the tailoring step.');
+
+        $this->assertSame(['REST APIs', 'Docker'], array_column($response->json('added_keywords'), 'term'));
     }
 
     public function test_verified_keywords_are_guaranteed_but_unverified_claims_are_not(): void
@@ -81,15 +118,64 @@ class ResumeTailorTest extends TestCase
         $refined = $this->withCredentials()->withCookie(config('session.cookie'), TailoredResume::firstOrFail()->session_id)
             ->postJson($first->json('refine_url'), ['confirmed_skills' => ['Docker']])
             ->assertOk()
-            ->assertJsonPath('tailored_score.breakdown.keywords.score', 100)
+            ->assertJsonPath('tailored_score.breakdown.keywords.score', 94)
+            ->assertJsonPath('tailored_score.skills_only', 2)
             ->assertJsonPath('confirmed_skills', ['Docker']);
 
         $this->assertGreaterThan($first->json('tailored_score.score'), $refined->json('tailored_score.score'));
+        $this->assertLessThanOrEqual(95, $refined->json('tailored_score.score'));
         $this->assertSame($first->json('tailored_id'), $refined->json('tailored_id'));
 
         Http::assertSentCount(3);
         Http::assertSent(fn (Request $request) => str_contains($request['messages'][1]['content'], "SKILLS THE CANDIDATE CONFIRMED THEY HAVE:\nDocker"));
-        $this->assertSame(100, TailoredResume::firstOrFail()->score_report['tailored']['breakdown']['keywords']['score']);
+        $this->assertSame(94, TailoredResume::firstOrFail()->score_report['tailored']['breakdown']['keywords']['score']);
+        $this->assertStringContainsString('Docker', TailoredResume::firstOrFail()->tailored_cv_html);
+    }
+
+    public function test_large_job_descriptions_are_trimmed_before_calling_groq(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $this->postJson('/tailor', [
+            'cv_file' => $this->docx(self::CV_TEXT),
+            'job_description' => str_repeat('We need a Laravel developer who builds REST APIs. ', 800),
+        ])->assertOk();
+
+        $requests = Http::recorded();
+
+        $this->assertGreaterThan(0, $requests->count());
+        $requests->each(function (array $pair) {
+            $this->assertLessThan(20000, mb_strlen($pair[0]['messages'][1]['content']));
+        });
+    }
+
+    public function test_a_413_is_retried_with_a_smaller_prompt(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push(['error' => ['message' => 'Request too large']], 413)
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $this->postJson('/tailor', $this->tailorPayload())->assertOk();
+
+        Http::assertSentCount(3);
+    }
+
+    public function test_download_accepts_a_valid_access_token_without_a_session(): void
+    {
+        $tailored = TailoredResume::create([
+            'session_id' => 'someone-else',
+            'access_token' => 'valid-access-token',
+            'job_description' => 'JD',
+            'tailored_cv_html' => '<html><body>Tailored CV</body></html>',
+            'tailored_cv_json' => ['name' => 'Jane Doe'],
+        ]);
+
+        $this->get(route('resume.download', ['tailoredResume' => $tailored, 'token' => 'valid-access-token']))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
     }
 
     public function test_refine_is_restricted_to_the_owning_session(): void

@@ -26,6 +26,22 @@ class AtsScorer
     ];
 
     /**
+     * Credit for a keyword that appears only in the skills list, not in the summary or experience.
+     * Jobscan-style tools treat listed skills as weaker evidence than demonstrated skills.
+     */
+    public const SKILLS_ONLY_CREDIT = 0.85;
+
+    /**
+     * A resume that only lists a keyword cannot be a perfect match, even if every keyword is present.
+     */
+    public const SKILLS_ONLY_MAX_SCORE = 95;
+
+    /**
+     * Cap for a tailored resume whose match score only became perfect because the tool added keywords.
+     */
+    public const ADDED_KEYWORD_MAX_SCORE = 95;
+
+    /**
      * Words that describe seniority rather than the role, stripped to find the core job title.
      */
     protected const SENIORITY_WORDS = ['junior', 'senior', 'sr', 'jr', 'lead', 'principal', 'staff', 'associate', 'entry level', 'mid level', 'intern', 'trainee', 'head', 'chief', 'i', 'ii', 'iii'];
@@ -41,12 +57,26 @@ class AtsScorer
     ];
 
     /**
+     * Headings used to split the resume into context and skills sections for keyword scoring.
+     */
+    protected const SECTION_START_HEADINGS = [
+        'summary' => ['summary', 'profile', 'objective', 'about me'],
+        'experience' => ['experience', 'employment', 'work history', 'career history'],
+        'skills' => ['skills', 'competencies', 'technologies', 'expertise'],
+        'education' => ['education', 'academic', 'qualifications'],
+        'projects' => ['projects', 'portfolio'],
+        'certifications' => ['certifications', 'certificates', 'licenses'],
+        'languages' => ['languages'],
+    ];
+
+    /**
      * @param  array<int, array{term: string, aliases?: array<int, string>, category?: string, importance?: string}>  $keywords
      * @return array{
      *     score: int,
      *     breakdown: array<string, array{score: int, weight: int, label: string, detail: string}>,
-     *     matched: array<int, array{term: string, category: string, importance: string}>,
+     *     matched: array<int, array{term: string, category: string, importance: string, in_context: bool}>,
      *     missing: array<int, array{term: string, category: string, importance: string}>,
+     *     skills_only: int,
      *     required_total: int,
      *     required_matched: int
      * }
@@ -54,7 +84,17 @@ class AtsScorer
     public function score(string $text, array $keywords, string $jobTitle = ''): array
     {
         $haystack = $this->normalize($text);
-        $keywordReport = $this->scoreKeywords($haystack, $keywords);
+        $sections = $this->splitSections($text);
+        $skillsText = trim($sections['skills'] ?? '');
+
+        $keywordReport = $skillsText === ''
+            ? $this->scoreKeywords($haystack, $keywords)
+            : $this->scoreKeywords(
+                $this->normalize(collect($sections)->except('skills')->implode("\n")),
+                $keywords,
+                $skillsText,
+            );
+
         $titleScore = $this->scoreJobTitle($haystack, $jobTitle);
         $foundSections = $this->findSections($text);
         $hasEmail = (bool) preg_match('/[\w.+-]+@[\w-]+\.[\w.]+/', $text);
@@ -64,7 +104,8 @@ class AtsScorer
             'keywords' => [
                 'score' => $keywordReport['score'],
                 'label' => 'Keyword match',
-                'detail' => count($keywordReport['matched']).' of '.count($keywords).' JD keywords found',
+                'detail' => count($keywordReport['matched']).' of '.count($keywords).' JD keywords found'
+                    .($keywordReport['skills_only'] > 0 ? ' ('.$keywordReport['skills_only'].' only in the skills list)' : ''),
             ],
             'job_title' => [
                 'score' => $titleScore,
@@ -101,11 +142,16 @@ class AtsScorer
         }
         unset($component);
 
+        if ($keywordReport['skills_only'] > 0) {
+            $overall = min($overall, self::SKILLS_ONLY_MAX_SCORE);
+        }
+
         return [
             'score' => (int) round($overall),
             'breakdown' => $breakdown,
             'matched' => $keywordReport['matched'],
             'missing' => $keywordReport['missing'],
+            'skills_only' => $keywordReport['skills_only'],
             'required_total' => $keywordReport['required_total'],
             'required_matched' => $keywordReport['required_matched'],
         ];
@@ -113,13 +159,15 @@ class AtsScorer
 
     /**
      * @param  array<int, array{term: string, aliases?: array<int, string>, category?: string, importance?: string}>  $keywords
-     * @return array{score: int, matched: array<int, array{term: string, category: string, importance: string}>, missing: array<int, array{term: string, category: string, importance: string}>, required_total: int, required_matched: int}
+     * @return array{score: int, matched: array<int, array{term: string, category: string, importance: string, in_context: bool}>, missing: array<int, array{term: string, category: string, importance: string}>, skills_only: int, skills_only_terms: array<int, string>, required_total: int, required_matched: int}
      */
-    public function scoreKeywords(string $haystack, array $keywords): array
+    public function scoreKeywords(string $haystack, array $keywords, string $skillsHaystack = ''): array
     {
         $haystack = $this->normalize($haystack);
+        $skillsHaystack = $this->normalize($skillsHaystack);
         $matched = [];
         $missing = [];
+        $skillsOnly = [];
         $totalWeight = 0;
         $matchedWeight = 0;
         $requiredTotal = 0;
@@ -133,13 +181,22 @@ class AtsScorer
                 'category' => $keyword['category'] ?? 'hard_skill',
                 'importance' => $isRequired ? 'required' : 'preferred',
             ];
+            $terms = [$keyword['term'], ...($keyword['aliases'] ?? [])];
 
             $totalWeight += $weight;
             $requiredTotal += $isRequired ? 1 : 0;
 
-            if ($this->containsAny($haystack, [$keyword['term'], ...($keyword['aliases'] ?? [])])) {
-                $matched[] = $entry;
+            $inContext = $this->containsAny($haystack, $terms);
+            $inSkillsOnly = ! $inContext && $skillsHaystack !== '' && $this->containsAny($skillsHaystack, $terms);
+
+            if ($inContext) {
+                $matched[] = $entry + ['in_context' => true];
                 $matchedWeight += $weight;
+                $requiredMatched += $isRequired ? 1 : 0;
+            } elseif ($inSkillsOnly) {
+                $matched[] = $entry + ['in_context' => false];
+                $skillsOnly[] = $entry;
+                $matchedWeight += $weight * self::SKILLS_ONLY_CREDIT;
                 $requiredMatched += $isRequired ? 1 : 0;
             } else {
                 $missing[] = $entry;
@@ -150,6 +207,8 @@ class AtsScorer
             'score' => $totalWeight > 0 ? (int) round(100 * $matchedWeight / $totalWeight) : 0,
             'matched' => $matched,
             'missing' => $missing,
+            'skills_only' => count($skillsOnly),
+            'skills_only_terms' => array_column($skillsOnly, 'term'),
             'required_total' => $requiredTotal,
             'required_matched' => $requiredMatched,
         ];
@@ -170,14 +229,23 @@ class AtsScorer
                 continue;
             }
 
-            $pattern = implode('[\s\-\/]+', array_map(fn (string $part) => preg_quote($part, '/'), preg_split('/[\s\-\/]+/', $term)));
-
-            if (preg_match('/(?<![a-z0-9])'.$pattern.'(?:s|es)?(?![a-z0-9])/u', $haystack)) {
+            if (preg_match('/(?<![a-z0-9])'.$this->termPattern($term).'(?:s|es)?(?![a-z0-9])/u', $haystack)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Regex for a term whose words may be separated by spaces, hyphens or slashes.
+     */
+    protected function termPattern(string $term): string
+    {
+        return implode('[\s\-\/]+', array_map(
+            fn (string $part) => preg_quote($part, '/'),
+            preg_split('/[\s\-\/]+/', $term) ?: [$term],
+        ));
     }
 
     protected function scoreJobTitle(string $haystack, string $jobTitle): int
@@ -214,6 +282,51 @@ class AtsScorer
             ))
             ->keys()
             ->all();
+    }
+
+    /**
+     * Split the visible resume text into its sections so keywords can be judged by where they appear.
+     *
+     * @return array<string, string>
+     */
+    protected function splitSections(string $text): array
+    {
+        $sections = ['preamble' => ''];
+        $current = 'preamble';
+
+        foreach (preg_split('/\R/u', $text) ?: [$text] as $line) {
+            $key = $this->sectionKeyForHeading($line);
+
+            if ($key !== null) {
+                $current = $key;
+                $sections[$current] ??= '';
+
+                continue;
+            }
+
+            $sections[$current] = trim(($sections[$current] ?? '').' '.$line);
+        }
+
+        return array_filter($sections, fn (string $value) => trim($value) !== '');
+    }
+
+    protected function sectionKeyForHeading(string $line): ?string
+    {
+        $line = mb_strtolower(trim($line, " \t:|-"));
+
+        if ($line === '' || mb_strlen($line) > 40 || preg_match('/[":,]/u', $line)) {
+            return null;
+        }
+
+        foreach (self::SECTION_START_HEADINGS as $key => $words) {
+            foreach ($words as $word) {
+                if (preg_match('/(?<![a-z0-9])'.$this->termPattern($word).'(?:s)?(?![a-z0-9])/u', $line)) {
+                    return $key;
+                }
+            }
+        }
+
+        return null;
     }
 
     protected function normalize(string $text): string

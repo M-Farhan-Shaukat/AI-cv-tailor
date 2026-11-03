@@ -21,7 +21,7 @@ class ResumeTailorController extends Controller
     /**
      * Upper bound on CV characters sent to the model, to stay within Groq's per-minute token limit.
      */
-    protected const MAX_CV_CHARACTERS = 15000;
+    protected const MAX_CV_CHARACTERS = 8000;
 
     public function index(): InertiaResponse
     {
@@ -35,9 +35,11 @@ class ResumeTailorController extends Controller
 
     public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor): JsonResponse
     {
+        set_time_limit(180);
+
         $request->validate([
             'cv_file' => 'required|file|mimes:pdf,docx|max:5120',
-            'job_description' => 'required|string|min:50|max:20000',
+            'job_description' => 'required|string|min:50|max:100000',
         ]);
 
         $file = $request->file('cv_file');
@@ -58,6 +60,7 @@ class ResumeTailorController extends Controller
 
         $tailored = TailoredResume::create([
             'session_id' => Session::getId(),
+            'access_token' => Str::random(48),
             'original_filename' => $file->getClientOriginalName(),
             'job_description' => $jobDescription,
             'extracted_cv_text' => $cvText,
@@ -72,7 +75,9 @@ class ResumeTailorController extends Controller
      */
     public function refine(Request $request, TailoredResume $tailoredResume, ResumeTailor $resumeTailor): JsonResponse
     {
-        abort_unless($tailoredResume->session_id === Session::getId(), Response::HTTP_FORBIDDEN);
+        set_time_limit(180);
+
+        $this->authorizeAccess($request, $tailoredResume);
 
         $validated = $request->validate([
             'confirmed_skills' => 'required|array|min:1|max:40',
@@ -102,9 +107,9 @@ class ResumeTailorController extends Controller
         return $this->resultResponse($tailoredResume, $result, $confirmedSkills);
     }
 
-    public function downloadPdf(TailoredResume $tailoredResume): Response
+    public function downloadPdf(Request $request, TailoredResume $tailoredResume): Response
     {
-        abort_unless($tailoredResume->session_id === Session::getId(), Response::HTTP_FORBIDDEN);
+        $this->authorizeAccess($request, $tailoredResume);
 
         $html = $tailoredResume->tailored_cv_html;
         abort_if(empty($html), Response::HTTP_NOT_FOUND, 'Tailored resume HTML not found.');
@@ -112,7 +117,28 @@ class ResumeTailorController extends Controller
         $name = $tailoredResume->tailored_cv_json['name'] ?? '';
         $filename = Str::slug($name ?: 'tailored').'-resume.pdf';
 
-        return Pdf::loadHTML($html)->setPaper('a4', 'portrait')->download($filename);
+        $response = Pdf::loadHTML($html)->setPaper('a4', 'portrait')->download($filename);
+        $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->headers->set('Pragma', 'no-cache');
+
+        return $response;
+    }
+
+    /**
+     * Allow the owning session, or a request carrying the resume's unguessable access token.
+     */
+    protected function authorizeAccess(Request $request, TailoredResume $tailoredResume): void
+    {
+        if ($tailoredResume->session_id === Session::getId()) {
+            return;
+        }
+
+        $token = (string) $request->query('token', '');
+
+        abort_unless(
+            filled($tailoredResume->access_token) && hash_equals($tailoredResume->access_token, $token),
+            Response::HTTP_FORBIDDEN,
+        );
     }
 
     /**
@@ -145,6 +171,12 @@ class ResumeTailorController extends Controller
      */
     protected function resultResponse(TailoredResume $tailored, array $result, array $confirmedSkills): JsonResponse
     {
+        $routeParameters = fn (): array => [
+            'tailoredResume' => $tailored,
+            'token' => $tailored->access_token,
+            'v' => substr(md5((string) $tailored->tailored_cv_html), 0, 12),
+        ];
+
         return response()->json([
             'success' => true,
             'tailored_id' => $tailored->id,
@@ -156,8 +188,8 @@ class ResumeTailorController extends Controller
             'changes' => $result['resume']['changes'],
             'html' => $result['html'],
             'plain_text' => $result['plain_text'],
-            'download_url' => route('resume.download', $tailored),
-            'refine_url' => route('resume.refine', $tailored),
+            'download_url' => route('resume.download', $routeParameters(), false),
+            'refine_url' => route('resume.refine', $routeParameters(), false),
         ]);
     }
 }

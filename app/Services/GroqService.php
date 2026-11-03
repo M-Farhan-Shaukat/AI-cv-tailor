@@ -11,6 +11,16 @@ use RuntimeException;
 
 class GroqService
 {
+    /**
+     * Groq's free tier limits requests to roughly 8,000 tokens per minute. These conservative
+     * character caps (about 3.3 characters per token) keep the prompt well inside that budget.
+     */
+    protected const MAX_KEYWORD_JD_CHARACTERS = 8000;
+
+    protected const MAX_REWRITE_JD_CHARACTERS = 3500;
+
+    protected const MAX_REWRITE_CV_CHARACTERS = 6500;
+
     protected ?string $apiKey;
 
     protected string $model;
@@ -68,7 +78,11 @@ class GroqService
         Return ONLY JSON: {"job_title": string, "keywords": [{"term": string, "aliases": [string], "category": string, "importance": "required"|"preferred"}]}
         PROMPT;
 
-        $result = $this->chatJson($systemPrompt, "JOB DESCRIPTION:\n".$jobDescription, 4000);
+        $fullJobDescription = $jobDescription;
+        $jobDescription = $this->limitForPrompt($jobDescription, self::MAX_KEYWORD_JD_CHARACTERS);
+        $shrink = fn (): array => [$systemPrompt, "JOB DESCRIPTION:\n".$this->limitForPrompt($fullJobDescription, 4000), 1200];
+
+        $result = $this->chatJson($systemPrompt, "JOB DESCRIPTION:\n".$jobDescription, 2000, $shrink);
 
         $keywords = collect($result['keywords'] ?? [])
             ->filter(fn ($keyword) => is_array($keyword) && filled($keyword['term'] ?? null))
@@ -166,62 +180,104 @@ class GroqService
             ->map(fn (array $keyword) => '- '.$keyword['term'].' ('.$keyword['importance'].')')
             ->implode("\n");
 
-        $userPrompt = 'TARGET JOB TITLE: '.($jobTitle ?: 'see JD')."\n\n"
-            ."JD KEYWORDS ALREADY IN THE CV (keep them and make them prominent):\n".($formatKeywords($keywordReport['matched']) ?: 'none')."\n\n"
-            ."JD KEYWORDS MISSING FROM THE CV (add each one the CV or confirmed skills support):\n".($formatKeywords($keywordReport['missing']) ?: 'none')."\n\n"
-            .($confirmedSkills !== [] ? "SKILLS THE CANDIDATE CONFIRMED THEY HAVE:\n".implode(', ', $confirmedSkills)."\n\n" : '')
-            ."JOB DESCRIPTION:\n".$jobDescription."\n\n"
-            ."CANDIDATE CV:\n".$cvText;
+        $buildUserPrompt = function (float $scale) use ($jobTitle, $formatKeywords, $keywordReport, $confirmedSkills, $jobDescription, $cvText): string {
+            $cvText = $this->limitForPrompt($cvText, (int) round(self::MAX_REWRITE_CV_CHARACTERS * $scale));
+            $jobDescription = $this->limitForPrompt($jobDescription, (int) round(self::MAX_REWRITE_JD_CHARACTERS * $scale));
 
-        return $this->normalizeResume($this->chatJson($systemPrompt, $userPrompt, 12000));
+            return 'TARGET JOB TITLE: '.($jobTitle ?: 'see JD')."\n\n"
+                ."JD KEYWORDS ALREADY IN THE CV (keep them and make them prominent):\n".($formatKeywords($keywordReport['matched']) ?: 'none')."\n\n"
+                ."JD KEYWORDS MISSING FROM THE CV (add each one the CV or confirmed skills support):\n".($formatKeywords($keywordReport['missing']) ?: 'none')."\n\n"
+                .($confirmedSkills !== [] ? "SKILLS THE CANDIDATE CONFIRMED THEY HAVE:\n".implode(', ', $confirmedSkills)."\n\n" : '')
+                ."JOB DESCRIPTION:\n".$jobDescription."\n\n"
+                ."CANDIDATE CV:\n".$cvText;
+        };
+
+        $shrink = fn (): array => [$systemPrompt, $buildUserPrompt(0.6), 2000];
+
+        return $this->normalizeResume($this->chatJson($systemPrompt, $buildUserPrompt(1.0), 3000, $shrink));
     }
 
     /**
+     * Keep the most useful parts of an oversized input instead of letting Groq reject the request.
+     */
+    protected function limitForPrompt(string $text, int $maxCharacters): string
+    {
+        $text = trim(preg_replace('/[ \t]+/u', ' ', $text));
+        $text = trim(preg_replace("/\n{3,}/u", "\n\n", $text));
+
+        if (mb_strlen($text) <= $maxCharacters) {
+            return $text;
+        }
+
+        $headLength = (int) floor($maxCharacters * 0.65);
+        $tailLength = max(0, $maxCharacters - $headLength - 48);
+
+        return mb_substr($text, 0, $headLength)
+            ."\n[... trimmed to fit the AI token limit ...]\n"
+            .mb_substr($text, -$tailLength);
+    }
+
+    /**
+     * @param  (callable(): array{0: string, 1: string, 2: int})|null  $shrink  Rebuilds a smaller prompt when Groq rejects the request size.
      * @return array<string, mixed>
      */
-    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens): array
+    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null): array
     {
         if (empty($this->apiKey)) {
             throw new RuntimeException('GROQ_API_KEY is missing. Please set it in your .env file.');
         }
 
-        $payload = [
-            'model' => $this->model,
-            'messages' => [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $userPrompt],
-            ],
-            'temperature' => 0.2,
-            'max_completion_tokens' => $maxTokens,
-            'response_format' => ['type' => 'json_object'],
-        ];
+        $attempts = $shrink === null ? 1 : 2;
 
-        if (str_contains($this->model, 'gpt-oss')) {
-            $payload['reasoning_effort'] = $this->reasoningEffort;
-        }
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            $payload = [
+                'model' => $this->model,
+                'messages' => [
+                    ['role' => 'system', 'content' => $systemPrompt],
+                    ['role' => 'user', 'content' => $userPrompt],
+                ],
+                'temperature' => 0.2,
+                'max_completion_tokens' => $maxTokens,
+                'response_format' => ['type' => 'json_object'],
+            ];
 
-        try {
-            $response = Http::withToken($this->apiKey)
-                ->acceptJson()
-                ->timeout(180)
-                ->retry(3, function (int $attempt, \Throwable $exception) {
-                    $retryAfter = $exception instanceof RequestException
-                        ? (int) $exception->response->header('retry-after')
-                        : 0;
+            if (str_contains($this->model, 'gpt-oss')) {
+                $payload['reasoning_effort'] = $this->reasoningEffort;
+            }
 
-                    return min(max($retryAfter, $attempt * 2), 30) * 1000;
-                }, function (\Throwable $exception) {
-                    return $exception instanceof RequestException
-                        && (in_array($exception->response->status(), [429, 500, 502, 503], true)
-                            || $exception->response->json('error.code') === 'json_validate_failed');
-                })
-                ->post($this->apiUrl, $payload);
-        } catch (RequestException $exception) {
-            $response = $exception->response;
-        } catch (ConnectionException $exception) {
-            Log::error('Groq connection error', ['message' => $exception->getMessage()]);
+            try {
+                $response = Http::withToken($this->apiKey)
+                    ->acceptJson()
+                    ->connectTimeout(15)
+                    ->timeout(120)
+                    ->retry(3, function (int $attempt, \Throwable $exception) {
+                        $retryAfter = $exception instanceof RequestException
+                            ? (int) $exception->response->header('retry-after')
+                            : 0;
 
-            throw new RuntimeException('Could not reach the Groq API. Check your internet connection and try again.');
+                        return min(max($retryAfter, $attempt * 3), 60) * 1000;
+                    }, function (\Throwable $exception) {
+                        return $exception instanceof RequestException
+                            && (in_array($exception->response->status(), [429, 500, 502, 503], true)
+                                || $exception->response->json('error.code') === 'json_validate_failed');
+                    })
+                    ->post($this->apiUrl, $payload);
+            } catch (RequestException $exception) {
+                $response = $exception->response;
+            } catch (ConnectionException $exception) {
+                Log::error('Groq connection error', ['message' => $exception->getMessage()]);
+
+                throw new RuntimeException('Could not reach the Groq API. Check your internet connection and try again.');
+            }
+
+            if ($response->status() === 413 && $attempt < $attempts && $shrink !== null) {
+                Log::notice('Groq rejected the prompt size, retrying with a smaller prompt');
+                [$systemPrompt, $userPrompt, $maxTokens] = $shrink();
+
+                continue;
+            }
+
+            break;
         }
 
         if ($response->failed()) {
@@ -230,14 +286,21 @@ class GroqService
             throw new RuntimeException($this->friendlyError($response));
         }
 
+        $finishReason = (string) $response->json('choices.0.finish_reason');
         $content = trim((string) $response->json('choices.0.message.content'));
         $content = preg_replace('/^```(?:json)?\s*|\s*```$/', '', $content);
         $decoded = json_decode($content, true);
 
         if (! is_array($decoded)) {
-            Log::error('Groq returned invalid JSON', ['content' => mb_substr($content, 0, 2000)]);
+            Log::error('Groq returned invalid JSON', [
+                'finish_reason' => $finishReason,
+                'usage' => $response->json('usage'),
+                'content' => mb_substr($content, 0, 2000),
+            ]);
 
-            throw new RuntimeException('The AI returned an unexpected response. Please try again.');
+            throw new RuntimeException($finishReason === 'length'
+                ? 'The AI response was cut off because the resume is too long. Please shorten the job description and try again.'
+                : 'The AI returned an unexpected response. Please try again.');
         }
 
         return $decoded;
@@ -247,8 +310,9 @@ class GroqService
     {
         return match (true) {
             $response->status() === 401 => 'Groq rejected the API key. Check GROQ_API_KEY in your .env file.',
-            $response->status() === 413 => 'Your CV and job description are too long for the AI model. Please shorten the job description.',
+            $response->status() === 413 => 'The request is still too large for Groq\'s free-tier token limit. Please shorten the job description and try again.',
             $response->status() === 429 => 'Groq rate limit reached. Please wait a minute and try again.',
+            $response->json('error.code') === 'json_validate_failed' => 'The AI could not produce a valid resume for this CV and job description. Please try again, or shorten the job description.',
             default => 'AI request failed ('.$response->status().'): '.($response->json('error.message') ?? 'unknown error'),
         };
     }

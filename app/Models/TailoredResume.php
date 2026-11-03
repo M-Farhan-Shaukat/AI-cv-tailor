@@ -11,6 +11,7 @@ class TailoredResume extends Model
 
     protected $fillable = [
         'session_id',
+        'access_token',
         'original_filename',
         'job_description',
         'extracted_cv_text',
