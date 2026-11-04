@@ -29,7 +29,7 @@ class GroqService
 
     protected string $reasoningEffort;
 
-    public function __construct()
+    public function __construct(protected LlmUsageTracker $usage)
     {
         $this->apiKey = config('services.groq.key');
         $this->model = config('services.groq.model') ?: 'openai/gpt-oss-120b';
@@ -82,7 +82,7 @@ class GroqService
         $jobDescription = $this->limitForPrompt($jobDescription, self::MAX_KEYWORD_JD_CHARACTERS);
         $shrink = fn (): array => [$systemPrompt, "JOB DESCRIPTION:\n".$this->limitForPrompt($fullJobDescription, 4000), 1200];
 
-        $result = $this->chatJson($systemPrompt, "JOB DESCRIPTION:\n".$jobDescription, 2000, $shrink);
+        $result = $this->chatJson($systemPrompt, "JOB DESCRIPTION:\n".$jobDescription, 2000, $shrink, 'keyword');
 
         $keywords = collect($result['keywords'] ?? [])
             ->filter(fn ($keyword) => is_array($keyword) && filled($keyword['term'] ?? null))
@@ -194,7 +194,7 @@ class GroqService
 
         $shrink = fn (): array => [$systemPrompt, $buildUserPrompt(0.6), 2000];
 
-        return $this->normalizeResume($this->chatJson($systemPrompt, $buildUserPrompt(1.0), 3000, $shrink));
+        return $this->normalizeResume($this->chatJson($systemPrompt, $buildUserPrompt(1.0), 3000, $shrink, 'tailor'));
     }
 
     /**
@@ -221,13 +221,16 @@ class GroqService
      * @param  (callable(): array{0: string, 1: string, 2: int})|null  $shrink  Rebuilds a smaller prompt when Groq rejects the request size.
      * @return array<string, mixed>
      */
-    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null): array
+    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null, string $scope = 'llm'): array
     {
         if (empty($this->apiKey)) {
             throw new RuntimeException('GROQ_API_KEY is missing. Please set it in your .env file.');
         }
 
+        $this->usage->ensureBudget();
+
         $attempts = $shrink === null ? 1 : 2;
+        $startedAt = microtime(true);
 
         for ($attempt = 1; $attempt <= $attempts; $attempt++) {
             $payload = [
@@ -244,6 +247,8 @@ class GroqService
             if (str_contains($this->model, 'gpt-oss')) {
                 $payload['reasoning_effort'] = $this->reasoningEffort;
             }
+
+            $startedAt = microtime(true);
 
             try {
                 $response = Http::withToken($this->apiKey)
@@ -265,6 +270,7 @@ class GroqService
             } catch (RequestException $exception) {
                 $response = $exception->response;
             } catch (ConnectionException $exception) {
+                $this->usage->recordFailure($scope, null, $exception->getMessage(), $this->durationMs($startedAt));
                 Log::error('Groq connection error', ['message' => $exception->getMessage()]);
 
                 throw new RuntimeException('Could not reach the Groq API. Check your internet connection and try again.');
@@ -280,10 +286,15 @@ class GroqService
             break;
         }
 
+        $duration = $this->durationMs($startedAt);
+        $usage = (array) ($response->json('usage') ?? []);
+
         if ($response->failed()) {
+            $message = $this->friendlyError($response);
+            $this->usage->recordFailure($scope, $response->status(), $message, $duration, $usage);
             Log::error('Groq API error', ['status' => $response->status(), 'body' => $response->body()]);
 
-            throw new RuntimeException($this->friendlyError($response));
+            throw new RuntimeException($message);
         }
 
         $finishReason = (string) $response->json('choices.0.finish_reason');
@@ -292,18 +303,28 @@ class GroqService
         $decoded = json_decode($content, true);
 
         if (! is_array($decoded)) {
+            $message = $finishReason === 'length'
+                ? 'The AI response was cut off because the resume is too long. Please shorten the job description and try again.'
+                : 'The AI returned an unexpected response. Please try again.';
+
+            $this->usage->recordFailure($scope, $response->status(), $message, $duration, $usage);
             Log::error('Groq returned invalid JSON', [
                 'finish_reason' => $finishReason,
                 'usage' => $response->json('usage'),
                 'content' => mb_substr($content, 0, 2000),
             ]);
 
-            throw new RuntimeException($finishReason === 'length'
-                ? 'The AI response was cut off because the resume is too long. Please shorten the job description and try again.'
-                : 'The AI returned an unexpected response. Please try again.');
+            throw new RuntimeException($message);
         }
 
+        $this->usage->recordSuccess($scope, $usage, $duration);
+
         return $decoded;
+    }
+
+    protected function durationMs(float $startedAt): int
+    {
+        return (int) round((microtime(true) - $startedAt) * 1000);
     }
 
     protected function friendlyError(Response $response): string

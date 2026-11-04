@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Models\JobPosting;
 use App\Models\TailoredResume;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
@@ -49,6 +51,30 @@ class ResumeTailorTest extends TestCase
         $this->assertStringStartsWith('/download/', $response->json('download_url'));
         $this->assertStringStartsWith('/tailor/', $response->json('refine_url'));
         $this->assertStringContainsString('token=', $response->json('refine_url'));
+    }
+
+    public function test_authenticated_tailoring_stores_the_cv_and_links_the_job_posting(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $user = User::factory()->create();
+        $posting = JobPosting::factory()->create();
+
+        $this->actingAs($user)
+            ->postJson('/tailor', [...$this->tailorPayload(), 'job_posting_id' => $posting->id])
+            ->assertOk();
+
+        $this->assertDatabaseHas('tailored_resumes', [
+            'user_id' => $user->id,
+            'job_posting_id' => $posting->id,
+        ]);
+        $this->assertDatabaseHas('user_resumes', [
+            'user_id' => $user->id,
+            'original_filename' => 'cv.docx',
+            'is_primary' => true,
+        ]);
     }
 
     public function test_tailored_score_is_capped_when_the_tool_adds_keywords(): void

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TailoredResume extends Model
 {
@@ -11,6 +12,8 @@ class TailoredResume extends Model
 
     protected $fillable = [
         'session_id',
+        'user_id',
+        'job_posting_id',
         'access_token',
         'original_filename',
         'job_description',
@@ -29,4 +32,14 @@ class TailoredResume extends Model
         'tailored_cv_json' => 'array',
         'score_report' => 'array',
     ];
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function jobPosting(): BelongsTo
+    {
+        return $this->belongsTo(JobPosting::class);
+    }
 }

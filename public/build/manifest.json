@@ -1,4 +1,26 @@
 {
+  "_AuthLayout-BnC2hZyw.js": {
+    "file": "assets/AuthLayout-BnC2hZyw.js",
+    "name": "AuthLayout",
+    "imports": [
+      "resources/js/app.jsx",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "_MainLayout-JotKSe_a.js": {
+    "file": "assets/MainLayout-JotKSe_a.js",
+    "name": "MainLayout",
+    "imports": [
+      "resources/js/app.jsx"
+    ]
+  },
+  "_axios-BBjAj_W4.js": {
+    "file": "assets/axios-BBjAj_W4.js",
+    "name": "axios",
+    "imports": [
+      "resources/js/app.jsx"
+    ]
+  },
   "node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff": {
     "file": "assets/bootstrap-icons-BHUGvtHM.woff",
     "src": "node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff"
@@ -8,7 +30,7 @@
     "src": "node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff2"
   },
   "resources/css/app.css": {
-    "file": "assets/app-C6MRSiAt.css",
+    "file": "assets/app-DM_pXoJl.css",
     "name": "app",
     "names": [
       "app.css"
@@ -16,26 +38,172 @@
     "src": "resources/css/app.css",
     "isEntry": true
   },
+  "resources/js/Pages/Admin/JobMetrics.jsx": {
+    "file": "assets/JobMetrics-Bj55iUJr.js",
+    "name": "JobMetrics",
+    "src": "resources/js/Pages/Admin/JobMetrics.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "resources/js/Pages/Auth/ConfirmPassword.jsx": {
+    "file": "assets/ConfirmPassword-fBrJbGpf.js",
+    "name": "ConfirmPassword",
+    "src": "resources/js/Pages/Auth/ConfirmPassword.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Auth/ForgotPassword.jsx": {
+    "file": "assets/ForgotPassword-ClJAa5Dn.js",
+    "name": "ForgotPassword",
+    "src": "resources/js/Pages/Auth/ForgotPassword.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Auth/Login.jsx": {
+    "file": "assets/Login-BgKqYkeg.js",
+    "name": "Login",
+    "src": "resources/js/Pages/Auth/Login.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Auth/Register.jsx": {
+    "file": "assets/Register-BHZo4qCp.js",
+    "name": "Register",
+    "src": "resources/js/Pages/Auth/Register.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Auth/ResetPassword.jsx": {
+    "file": "assets/ResetPassword-BBbbHh5K.js",
+    "name": "ResetPassword",
+    "src": "resources/js/Pages/Auth/ResetPassword.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Auth/VerifyEmail.jsx": {
+    "file": "assets/VerifyEmail-BJLHWCGd.js",
+    "name": "VerifyEmail",
+    "src": "resources/js/Pages/Auth/VerifyEmail.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/Jobs/Index.jsx": {
+    "file": "assets/Index-QI9jUWuU.js",
+    "name": "Index",
+    "src": "resources/js/Pages/Jobs/Index.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_axios-BBjAj_W4.js",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "resources/js/Pages/Jobs/Show.jsx": {
+    "file": "assets/Show-DKMaMrpx.js",
+    "name": "Show",
+    "src": "resources/js/Pages/Jobs/Show.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "resources/js/Pages/Profile/Edit.jsx": {
+    "file": "assets/Edit-C5ABPZRM.js",
+    "name": "Edit",
+    "src": "resources/js/Pages/Profile/Edit.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
   "resources/js/Pages/ResumeTailor.jsx": {
-    "file": "assets/ResumeTailor-D2uqwPSK.js",
+    "file": "assets/ResumeTailor-Blzt7ztY.js",
     "name": "ResumeTailor",
     "src": "resources/js/Pages/ResumeTailor.jsx",
     "isDynamicEntry": true,
     "imports": [
-      "resources/js/app.jsx"
+      "resources/js/app.jsx",
+      "_axios-BBjAj_W4.js",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "resources/js/Pages/Resumes/Index.jsx": {
+    "file": "assets/Index-B-uopTsy.js",
+    "name": "Index",
+    "src": "resources/js/Pages/Resumes/Index.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_AuthLayout-BnC2hZyw.js"
+    ]
+  },
+  "resources/js/Pages/SavedJobs/Index.jsx": {
+    "file": "assets/Index-CZOZownp.js",
+    "name": "Index",
+    "src": "resources/js/Pages/SavedJobs/Index.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_MainLayout-JotKSe_a.js"
+    ]
+  },
+  "resources/js/Pages/SavedSearches/Index.jsx": {
+    "file": "assets/Index-TzUgPv78.js",
+    "name": "Index",
+    "src": "resources/js/Pages/SavedSearches/Index.jsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "resources/js/app.jsx",
+      "_MainLayout-JotKSe_a.js"
     ]
   },
   "resources/js/app.jsx": {
-    "file": "assets/app-Bx1VnK1w.js",
+    "file": "assets/app-C1faAwOF.js",
     "name": "app",
     "src": "resources/js/app.jsx",
     "isEntry": true,
     "dynamicImports": [
-      "resources/js/Pages/ResumeTailor.jsx"
+      "resources/js/Pages/Admin/JobMetrics.jsx",
+      "resources/js/Pages/Auth/ConfirmPassword.jsx",
+      "resources/js/Pages/Auth/ForgotPassword.jsx",
+      "resources/js/Pages/Auth/Login.jsx",
+      "resources/js/Pages/Auth/Register.jsx",
+      "resources/js/Pages/Auth/ResetPassword.jsx",
+      "resources/js/Pages/Auth/VerifyEmail.jsx",
+      "resources/js/Pages/Jobs/Index.jsx",
+      "resources/js/Pages/Jobs/Show.jsx",
+      "resources/js/Pages/Profile/Edit.jsx",
+      "resources/js/Pages/ResumeTailor.jsx",
+      "resources/js/Pages/Resumes/Index.jsx",
+      "resources/js/Pages/SavedJobs/Index.jsx",
+      "resources/js/Pages/SavedSearches/Index.jsx"
     ],
     "css": [
       "assets/app-gwj8okrH.css",
-      "assets/app-C6MRSiAt.css"
+      "assets/app-DM_pXoJl.css"
     ],
     "assets": [
       "assets/bootstrap-icons-DJdhg9lH.woff2",

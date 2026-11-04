@@ -42,4 +42,20 @@ return [
         'reasoning_effort' => env('GROQ_REASONING_EFFORT', 'low'),
     ],
 
+    'adzuna' => [
+        'app_id' => env('ADZUNA_APP_ID'),
+        'app_key' => env('ADZUNA_APP_KEY'),
+        'country' => env('ADZUNA_COUNTRY', 'gb'),
+        'base_url' => env('ADZUNA_BASE_URL', 'https://api.adzuna.com'),
+    ],
+
+    'jooble' => [
+        'key' => env('JOOBLE_API_KEY'),
+        'base_url' => env('JOOBLE_BASE_URL', 'https://jooble.org'),
+    ],
+
+    'remotive' => [
+        'base_url' => env('REMOTIVE_BASE_URL', 'https://remotive.com/api'),
+    ],
+
 ];

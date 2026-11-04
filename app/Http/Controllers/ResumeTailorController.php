@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\JobPosting;
 use App\Models\TailoredResume;
+use App\Services\LlmBudgetExceededException;
 use App\Services\ResumeTailor;
 use App\Services\ResumeTextExtractor;
+use App\Services\UserResumeStore;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -23,23 +27,33 @@ class ResumeTailorController extends Controller
      */
     protected const MAX_CV_CHARACTERS = 8000;
 
-    public function index(): InertiaResponse
+    public function index(Request $request): InertiaResponse
     {
+        $jobPosting = $request->integer('job') > 0
+            ? JobPosting::query()->find($request->integer('job'))
+            : null;
+
         return Inertia::render('ResumeTailor', [
             'seo' => [
                 'title' => 'AI-Powered Resume Tailor & ATS Optimizer',
                 'description' => 'Upload your CV, paste a job description, and get an ATS-optimized tailored resume with match score instantly.',
             ],
+            'prefill' => $jobPosting ? [
+                'job_posting_id' => $jobPosting->id,
+                'job_title' => $jobPosting->title,
+                'job_description' => Str::limit($jobPosting->description, 30000, ''),
+            ] : null,
         ]);
     }
 
-    public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor): JsonResponse
+    public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, UserResumeStore $resumes): JsonResponse
     {
         set_time_limit(180);
 
         $request->validate([
             'cv_file' => 'required|file|mimes:pdf,docx|max:5120',
             'job_description' => 'required|string|min:50|max:100000',
+            'job_posting_id' => 'nullable|integer|exists:job_postings,id',
         ]);
 
         $file = $request->file('cv_file');
@@ -54,18 +68,28 @@ class ResumeTailorController extends Controller
 
         try {
             $result = $resumeTailor->tailor($cvText, $jobDescription);
+        } catch (LlmBudgetExceededException $exception) {
+            return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
         } catch (RuntimeException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_BAD_GATEWAY);
         }
 
-        $tailored = TailoredResume::create([
-            'session_id' => Session::getId(),
-            'access_token' => Str::random(48),
-            'original_filename' => $file->getClientOriginalName(),
-            'job_description' => $jobDescription,
-            'extracted_cv_text' => $cvText,
-            ...$this->attributesFromResult($result, []),
-        ]);
+        $tailored = DB::transaction(function () use ($request, $file, $jobDescription, $cvText, $result, $resumes): TailoredResume {
+            if ($request->user() !== null) {
+                $resumes->savePrimary($request->user(), $file->getClientOriginalName(), $cvText);
+            }
+
+            return TailoredResume::create([
+                'session_id' => Session::getId(),
+                'user_id' => $request->user()?->id,
+                'job_posting_id' => $request->integer('job_posting_id') ?: null,
+                'access_token' => Str::random(48),
+                'original_filename' => $file->getClientOriginalName(),
+                'job_description' => $jobDescription,
+                'extracted_cv_text' => $cvText,
+                ...$this->attributesFromResult($result, []),
+            ]);
+        });
 
         return $this->resultResponse($tailored, $result, []);
     }
@@ -98,6 +122,8 @@ class ResumeTailorController extends Controller
 
         try {
             $result = $resumeTailor->tailor($tailoredResume->extracted_cv_text, $tailoredResume->job_description, $jobAnalysis, $confirmedSkills);
+        } catch (LlmBudgetExceededException $exception) {
+            return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
         } catch (RuntimeException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_BAD_GATEWAY);
         }
@@ -125,10 +151,15 @@ class ResumeTailorController extends Controller
     }
 
     /**
-     * Allow the owning session, or a request carrying the resume's unguessable access token.
+     * Allow the owning account, the owning session, or a request carrying the resume's
+     * unguessable access token.
      */
     protected function authorizeAccess(Request $request, TailoredResume $tailoredResume): void
     {
+        if ($tailoredResume->user_id !== null && $tailoredResume->user_id === $request->user()?->id) {
+            return;
+        }
+
         if ($tailoredResume->session_id === Session::getId()) {
             return;
         }

@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\LlmUsageTracker;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -14,7 +15,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(LlmUsageTracker::class);
     }
 
     /**
@@ -23,9 +24,15 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         RateLimiter::for('resume-tailor', function (Request $request) {
-            $key = $request->session()->getId() ?: $request->ip();
+            $key = $request->user() !== null ? 'user:'.$request->user()->id : 'ip:'.$request->ip();
 
             return Limit::perMinute(20)->by('resume-tailor:'.$key);
+        });
+
+        RateLimiter::for('job-scan', function (Request $request) {
+            $key = $request->user() !== null ? 'user:'.$request->user()->id : 'ip:'.$request->ip();
+
+            return Limit::perMinutes(10, 5)->by('job-scan:'.$key);
         });
     }
 }

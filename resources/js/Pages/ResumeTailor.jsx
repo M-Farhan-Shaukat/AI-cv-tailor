@@ -1,6 +1,7 @@
 import { Head } from '@inertiajs/react';
 import axios from 'axios';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import NavBar from '../Components/NavBar';
 import MainLayout from '../Layouts/MainLayout';
 
 const STAGES = [
@@ -91,10 +92,10 @@ function Chip({ keyword, tone, title }) {
     );
 }
 
-export default function ResumeTailor({ seo }) {
+export default function ResumeTailor({ seo, prefill = null }) {
     const [cvFile, setCvFile] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [jobDescription, setJobDescription] = useState('');
+    const [jobDescription, setJobDescription] = useState(prefill?.job_description || '');
     const [isProcessing, setIsProcessing] = useState(false);
     const [progressStage, setProgressStage] = useState(0);
     const [elapsed, setElapsed] = useState(0);
@@ -194,6 +195,10 @@ export default function ResumeTailor({ seo }) {
             formData.append('cv_file', cvFile);
             formData.append('job_description', jobDescription);
 
+            if (prefill?.job_posting_id) {
+                formData.append('job_posting_id', prefill.job_posting_id);
+            }
+
             const response = await axios.post('/tailor', formData, { headers: { Accept: 'application/json' } });
             showResult(response.data);
             setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -261,20 +266,12 @@ export default function ResumeTailor({ seo }) {
         <MainLayout seo={seo}>
             <Head title="AI Resume Tailor" />
 
-            <nav className="rt-nav">
-                <div className="container d-flex align-items-center justify-content-between py-3">
-                    <a href="/" className="rt-brand">
-                        <span className="rt-brand-mark"><i className="bi bi-file-earmark-check"></i></span>
-                        ResumeTailor<span style={{ color: 'var(--rt-primary)' }}>AI</span>
-                    </a>
-                    <div className="d-flex align-items-center gap-3 gap-md-4">
-                        <a href="#how-it-works" className="rt-nav-link d-none d-sm-inline">How it works</a>
-                        <span className="badge rounded-pill text-bg-light border fw-semibold d-none d-md-inline-flex align-items-center gap-1">
-                            <i className="bi bi-lightning-charge-fill text-warning"></i>Powered by Groq
-                        </span>
-                    </div>
-                </div>
-            </nav>
+            <NavBar>
+                <a href="#how-it-works" className="rt-nav-link d-none d-sm-inline">How it works</a>
+                <span className="badge rounded-pill text-bg-light border fw-semibold d-none d-lg-inline-flex align-items-center gap-1">
+                    <i className="bi bi-lightning-charge-fill text-warning"></i>Powered by Groq
+                </span>
+            </NavBar>
 
             <header className="rt-hero">
                 <div className="container">
@@ -296,6 +293,12 @@ export default function ResumeTailor({ seo }) {
                         <div className="col-lg-6">
                             <div className="rt-card rt-form-card">
                                 <form className="p-3 p-sm-4 p-lg-5" onSubmit={handleSubmit} noValidate>
+                                    {prefill?.job_title && (
+                                        <div className="alert alert-info d-flex gap-2 align-items-start py-2 small" role="status">
+                                            <i className="bi bi-briefcase mt-1"></i>
+                                            <span>Tailoring for <strong>{prefill.job_title}</strong>. The job description is pre-filled below.</span>
+                                        </div>
+                                    )}
                                     <div className="mb-4">
                                         <label className="form-label fw-semibold">1. Upload your CV</label>
                                         {cvFile ? (
