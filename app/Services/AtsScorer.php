@@ -47,27 +47,65 @@ class AtsScorer
     protected const SENIORITY_WORDS = ['junior', 'senior', 'sr', 'jr', 'lead', 'principal', 'staff', 'associate', 'entry level', 'mid level', 'intern', 'trainee', 'head', 'chief', 'i', 'ii', 'iii'];
 
     /**
-     * Heading words an ATS uses to recognise each standard resume section.
+     * Sections an ATS expects every resume to have.
      */
-    protected const SECTION_HEADINGS = [
-        'summary' => ['summary', 'profile', 'objective', 'about me'],
-        'experience' => ['experience', 'employment', 'work history', 'career history'],
-        'skills' => ['skills', 'competencies', 'technologies', 'expertise'],
-        'education' => ['education', 'academic', 'qualifications'],
+    protected const REQUIRED_SECTIONS = ['summary', 'experience', 'skills', 'education'];
+
+    /**
+     * Heading words an ATS uses to recognise each resume section. Also used to split the resume into
+     * context and skills sections for keyword scoring.
+     */
+    protected const SECTION_START_HEADINGS = [
+        'summary' => ['summary', 'profile', 'objective', 'about me', 'overview'],
+        'experience' => ['experience', 'employment', 'work history', 'career history', 'internships', 'professional background'],
+        'skills' => ['skills', 'competencies', 'technologies', 'expertise', 'proficiencies', 'tech stack'],
+        'education' => ['education', 'academic', 'academics', 'qualifications'],
+        'projects' => ['projects', 'portfolio'],
+        'certifications' => ['certifications', 'certificates', 'licenses', 'courses', 'training'],
+        'languages' => ['languages'],
     ];
 
     /**
-     * Headings used to split the resume into context and skills sections for keyword scoring.
+     * Words that may surround a heading word ("Relevant Work Experience", "Technical Skills & Tools").
+     * A line with more than one word outside this list is a sentence, not a heading.
      */
-    protected const SECTION_START_HEADINGS = [
-        'summary' => ['summary', 'profile', 'objective', 'about me'],
-        'experience' => ['experience', 'employment', 'work history', 'career history'],
-        'skills' => ['skills', 'competencies', 'technologies', 'expertise'],
-        'education' => ['education', 'academic', 'qualifications'],
-        'projects' => ['projects', 'portfolio'],
-        'certifications' => ['certifications', 'certificates', 'licenses'],
-        'languages' => ['languages'],
+    protected const HEADING_WORDS = [
+        'summary', 'profile', 'objective', 'about', 'me', 'overview', 'experience', 'experiences', 'employment', 'work',
+        'history', 'career', 'internships', 'internship', 'background', 'skills', 'skill', 'competencies', 'technologies',
+        'expertise', 'proficiencies', 'tech', 'stack', 'education', 'academic', 'academics', 'qualifications',
+        'projects', 'project', 'portfolio', 'certifications', 'certificates', 'licenses', 'courses', 'training',
+        'languages', 'professional', 'relevant', 'technical', 'core', 'key', 'and', '&', 'of', 'other', 'additional',
+        'personal', 'selected', 'notable', 'areas', 'soft', 'hard', 'tools', 'my', 'highlights', 'information', 'the',
     ];
+
+    /**
+     * Interchangeable role nouns: "Software Developer" is a near match for "Software Engineer".
+     */
+    protected const ROLE_SYNONYMS = [
+        'developer' => ['engineer', 'programmer'],
+        'engineer' => ['developer'],
+        'programmer' => ['developer', 'engineer'],
+    ];
+
+    /**
+     * Suffixes removed by the light stemmer, longest first.
+     */
+    protected const STEM_SUFFIXES = [
+        'izations', 'isations', 'ization', 'isation', 'ations', 'ation', 'ating', 'ators', 'ator', 'ated', 'ates', 'ate',
+        'izing', 'ising', 'ized', 'ised', 'izes', 'ises', 'ize', 'ise', 'ments', 'ment', 'ities', 'ity', 'ings', 'ing',
+        'ies', 'ied', 'ers', 'er', 'ed', 'es', 's', 'e', 'y',
+    ];
+
+    /**
+     * Single-word terms whose stem may be matched: derived practice words ("testing", "documentation"),
+     * never product names ("Express" must not match "expressed").
+     */
+    protected const STEMMABLE_ENDINGS = ['ing', 'ings', 'ment', 'ments', 'ation', 'ations', 'tion', 'tions', 'ies', 'ity', 'ities'];
+
+    /**
+     * @var array<string, array<int, string>>
+     */
+    protected array $stemmedHaystacks = [];
 
     /**
      * @param  array<int, array{term: string, aliases?: array<int, string>, category?: string, importance?: string}>  $keywords
@@ -98,7 +136,7 @@ class AtsScorer
         $titleScore = $this->scoreJobTitle($haystack, $jobTitle);
         $foundSections = $this->findSections($text);
         $hasEmail = (bool) preg_match('/[\w.+-]+@[\w-]+\.[\w.]+/', $text);
-        $hasPhone = (bool) preg_match('/\+?\d[\d\s().-]{7,}\d/', $text);
+        $hasPhone = $this->hasPhoneNumber($text);
 
         $breakdown = [
             'keywords' => [
@@ -112,16 +150,17 @@ class AtsScorer
                 'label' => 'Job title match',
                 'detail' => match (true) {
                     $titleScore === 100 => 'Exact target title "'.$jobTitle.'" found',
-                    $titleScore > 0 => 'Similar title found, not the exact "'.$jobTitle.'"',
+                    $titleScore >= 70 => 'Similar title found, not the exact "'.$jobTitle.'"',
+                    $titleScore > 0 => 'Related title found (e.g. Developer vs Engineer), not "'.$jobTitle.'"',
                     default => 'Target title "'.$jobTitle.'" not found',
                 },
             ],
             'sections' => [
-                'score' => (int) round(100 * count($foundSections) / count(self::SECTION_HEADINGS)),
+                'score' => (int) round(100 * count($foundSections) / count(self::REQUIRED_SECTIONS)),
                 'label' => 'Standard sections',
-                'detail' => count($foundSections) === count(self::SECTION_HEADINGS)
+                'detail' => count($foundSections) === count(self::REQUIRED_SECTIONS)
                     ? 'Summary, Experience, Skills and Education headings found'
-                    : 'Missing: '.implode(', ', array_map('ucfirst', array_diff(array_keys(self::SECTION_HEADINGS), $foundSections))),
+                    : 'Missing: '.implode(', ', array_map('ucfirst', array_diff(self::REQUIRED_SECTIONS, $foundSections))),
             ],
             'contact' => [
                 'score' => ($hasEmail ? 50 : 0) + ($hasPhone ? 50 : 0),
@@ -217,6 +256,10 @@ class AtsScorer
     /**
      * Whether the text contains the term (or one of its aliases) as a whole word or phrase.
      *
+     * Like an ATS parser it tolerates spelling variants: plurals ("API"/"APIs"), punctuation and spacing
+     * ("Node.js"/"NodeJS", "Front-end"/"Frontend", "JavaScript"/"Java Script") and word forms
+     * ("testing"/"tested", "technology"/"technologies").
+     *
      * @param  array<int, string>  $terms
      */
     public function containsAny(string $haystack, array $terms): bool
@@ -229,7 +272,122 @@ class AtsScorer
                 continue;
             }
 
-            if (preg_match('/(?<![a-z0-9])'.$this->termPattern($term).'(?:s|es)?(?![a-z0-9])/u', $haystack)) {
+            if ($this->matchesExactly($haystack, $term)
+                || $this->matchesCompactForm($haystack, $term)
+                || $this->matchesStemmed($haystack, $term)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The term as written, its singular when the term is a plural ("REST APIs" matches "REST API"),
+     * or its "-ies" plural ("technology" matches "technologies").
+     */
+    protected function matchesExactly(string $haystack, string $term): bool
+    {
+        $variants = [$term];
+        if (preg_match('/(?<![a-z0-9])[a-z]{2,}[^s]s$/u', $term)) {
+            $variants[] = mb_substr($term, 0, -1);
+        }
+        if (preg_match('/[a-z]{2,}[^aeiou]y$/u', $term)) {
+            $variants[] = mb_substr($term, 0, -1).'ie';
+        }
+
+        foreach ($variants as $variant) {
+            if (preg_match('/(?<![a-z0-9])'.$this->termPattern($variant).'(?:s|es)?(?![a-z0-9])/u', $haystack)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Match the term with separators ignored, so "Node.js", "NodeJS" and "Node JS" are the same keyword.
+     * Only for terms of 5+ letters, where a stray separator cannot create a false match.
+     */
+    protected function matchesCompactForm(string $haystack, string $term): bool
+    {
+        $compact = preg_replace('/[\s.\-\/]+/u', '', $term);
+
+        if (mb_strlen($compact) < 5 || ! preg_match('/^[a-z0-9]+$/', $compact)) {
+            return false;
+        }
+
+        $pattern = implode('[.\-\/ ]?', str_split($compact));
+
+        return (bool) preg_match('/(?<![a-z0-9])'.$pattern.'(?:s|es)?(?![a-z0-9])/u', $haystack);
+    }
+
+    /**
+     * Match word forms of the term ("unit tests" for "unit testing", "deployed" for "deployment").
+     */
+    protected function matchesStemmed(string $haystack, string $term): bool
+    {
+        if (! preg_match('/^[a-z]+(?:[\s\-][a-z]+)*$/u', $term)) {
+            return false;
+        }
+
+        $termWords = preg_split('/[\s\-]+/u', $term);
+        $isStemmable = count($termWords) > 1 || collect(self::STEMMABLE_ENDINGS)->contains(fn (string $ending) => str_ends_with($term, $ending));
+
+        if (! $isStemmable) {
+            return false;
+        }
+
+        $termStems = array_map(fn (string $word) => $this->stem($word), $termWords);
+        $haystackStems = $this->stemmedHaystacks[$haystack] ??= array_map(
+            fn (string $word) => $this->stem($word),
+            preg_split('/[^a-z0-9+#]+/u', $haystack, -1, PREG_SPLIT_NO_EMPTY),
+        );
+
+        foreach (array_keys($haystackStems, $termStems[0], true) as $start) {
+            if (array_slice($haystackStems, $start, count($termStems)) === $termStems) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A deliberately light stemmer: strips one derivational/inflectional suffix, then a trailing "e"/"y".
+     */
+    protected function stem(string $word): string
+    {
+        if (strlen($word) < 5 || ! ctype_alpha($word)) {
+            return $word;
+        }
+
+        foreach (self::STEM_SUFFIXES as $suffix) {
+            if ($suffix === 's' && str_ends_with($word, 'ss')) {
+                continue;
+            }
+
+            if (str_ends_with($word, $suffix) && strlen($word) - strlen($suffix) >= 4) {
+                $word = substr($word, 0, -strlen($suffix));
+
+                break;
+            }
+        }
+
+        return strlen($word) > 4 && in_array(substr($word, -1), ['e', 'y'], true) ? substr($word, 0, -1) : $word;
+    }
+
+    /**
+     * A phone number has 9-15 digits; a date range such as "2019 - 2022" is not one.
+     */
+    protected function hasPhoneNumber(string $text): bool
+    {
+        preg_match_all('/(?<![\w\/])\+?\(?\d[\d\s().\-]{6,}\d(?![\w\/])/u', $text, $matches);
+
+        foreach ($matches[0] as $candidate) {
+            $digits = strlen(preg_replace('/\D/', '', $candidate));
+
+            if ($digits >= 9 && $digits <= 15 && ! preg_match('/^\s*(?:19|20)\d{2}\s*[-.]\s*(?:19|20)\d{2}\s*$/', $candidate)) {
                 return true;
             }
         }
@@ -264,24 +422,42 @@ class AtsScorer
         }
         $coreTitle = trim(preg_replace('/\s+/', ' ', $coreTitle));
 
-        return $coreTitle !== '' && $this->containsAny($haystack, [$coreTitle]) ? 70 : 0;
+        if ($coreTitle === '') {
+            return 0;
+        }
+
+        if ($this->containsAny($haystack, [$coreTitle])) {
+            return 70;
+        }
+
+        $relatedTitles = [];
+        foreach (self::ROLE_SYNONYMS as $role => $synonyms) {
+            $rolePattern = '/(?<![a-z])'.$role.'(?![a-z])/';
+
+            if (preg_match($rolePattern, $coreTitle)) {
+                foreach ($synonyms as $synonym) {
+                    $relatedTitles[] = preg_replace($rolePattern, $synonym, $coreTitle);
+                }
+            }
+        }
+
+        return $relatedTitles !== [] && $this->containsAny($haystack, $relatedTitles) ? 50 : 0;
     }
 
     /**
+     * Required sections that have a recognisable heading line.
+     *
      * @return array<int, string>
      */
     protected function findSections(string $text): array
     {
-        $headingLines = collect(preg_split('/\R/u', mb_strtolower($text)))
-            ->map(fn (string $line) => trim($line, " \t:|-"))
-            ->filter(fn (string $line) => $line !== '' && mb_strlen($line) <= 40);
-
-        return collect(self::SECTION_HEADINGS)
-            ->filter(fn (array $words) => $headingLines->contains(
-                fn (string $line) => collect($words)->contains(fn (string $word) => str_contains($line, $word))
-            ))
-            ->keys()
+        $found = collect(preg_split('/\R/u', $text) ?: [])
+            ->map(fn (string $line) => $this->sectionKeyForHeading($line))
+            ->filter()
+            ->unique()
             ->all();
+
+        return array_values(array_intersect(self::REQUIRED_SECTIONS, $found));
     }
 
     /**
@@ -310,16 +486,25 @@ class AtsScorer
         return array_filter($sections, fn (string $value) => trim($value) !== '');
     }
 
-    protected function sectionKeyForHeading(string $line): ?string
+    /**
+     * The section a line starts when it is a heading ("Work Experience", "TECHNICAL SKILLS:"), or null for
+     * ordinary lines, including sentences that merely mention a heading word ("Software engineer with experience").
+     */
+    public function sectionKeyForHeading(string $line): ?string
     {
-        $line = mb_strtolower(trim($line, " \t:|-"));
+        $line = mb_strtolower(trim($line, " \t:|-*#\u{2022}"));
 
-        if ($line === '' || mb_strlen($line) > 40 || preg_match('/[":,]/u', $line)) {
+        if ($line === '' || mb_strlen($line) > 40 || preg_match('/[":,.;!?()\d]/u', $line)) {
             return null;
         }
 
-        foreach (self::SECTION_START_HEADINGS as $key => $words) {
-            foreach ($words as $word) {
+        $words = preg_split('/[^a-z&]+/u', $line, -1, PREG_SPLIT_NO_EMPTY);
+        if ($words === [] || count($words) > 5 || count(array_diff($words, self::HEADING_WORDS)) > 1) {
+            return null;
+        }
+
+        foreach (self::SECTION_START_HEADINGS as $key => $headingWords) {
+            foreach ($headingWords as $word) {
                 if (preg_match('/(?<![a-z0-9])'.$this->termPattern($word).'(?:s)?(?![a-z0-9])/u', $line)) {
                     return $key;
                 }

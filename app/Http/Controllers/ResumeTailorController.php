@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\JobPosting;
 use App\Models\TailoredResume;
 use App\Services\LlmBudgetExceededException;
+use App\Services\ResumeDesignExtractor;
 use App\Services\ResumeTailor;
 use App\Services\ResumeTextExtractor;
 use App\Services\UserResumeStore;
@@ -46,7 +47,7 @@ class ResumeTailorController extends Controller
         ]);
     }
 
-    public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, UserResumeStore $resumes): JsonResponse
+    public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, ResumeDesignExtractor $designExtractor, UserResumeStore $resumes): JsonResponse
     {
         set_time_limit(180);
 
@@ -66,8 +67,10 @@ class ResumeTailorController extends Controller
             ]);
         }
 
+        $design = $designExtractor->extract($file, $cvText);
+
         try {
-            $result = $resumeTailor->tailor($cvText, $jobDescription);
+            $result = $resumeTailor->tailor($cvText, $jobDescription, design: $design);
         } catch (LlmBudgetExceededException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
         } catch (RuntimeException $exception) {
@@ -121,7 +124,13 @@ class ResumeTailorController extends Controller
             : null;
 
         try {
-            $result = $resumeTailor->tailor($tailoredResume->extracted_cv_text, $tailoredResume->job_description, $jobAnalysis, $confirmedSkills);
+            $result = $resumeTailor->tailor(
+                $tailoredResume->extracted_cv_text,
+                $tailoredResume->job_description,
+                $jobAnalysis,
+                $confirmedSkills,
+                $tailoredResume->design_profile ?? [],
+            );
         } catch (LlmBudgetExceededException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
         } catch (RuntimeException $exception) {
@@ -143,7 +152,8 @@ class ResumeTailorController extends Controller
         $name = $tailoredResume->tailored_cv_json['name'] ?? '';
         $filename = Str::slug($name ?: 'tailored').'-resume.pdf';
 
-        $response = Pdf::loadHTML($html)->setPaper('a4', 'portrait')->download($filename);
+        $paper = ($tailoredResume->design_profile['page_size'] ?? 'a4') === 'letter' ? 'letter' : 'a4';
+        $response = Pdf::loadHTML($html)->setPaper($paper, 'portrait')->download($filename);
         $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
         $response->headers->set('Pragma', 'no-cache');
 
@@ -182,6 +192,7 @@ class ResumeTailorController extends Controller
         return [
             'tailored_cv_json' => $result['resume'],
             'tailored_cv_html' => $result['html'],
+            'design_profile' => $result['design'],
             'match_score' => $result['tailored']['score'],
             'original_score' => $result['original']['score'],
             'ats_keywords' => array_column($result['tailored']['matched'], 'term'),

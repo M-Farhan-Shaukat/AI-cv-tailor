@@ -158,6 +158,36 @@ class ResumeTailorTest extends TestCase
         $this->assertStringContainsString('Docker', TailoredResume::firstOrFail()->tailored_cv_html);
     }
 
+    public function test_the_tailored_resume_keeps_the_design_of_the_uploaded_cv_when_refined(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()))
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $heading = fn (string $text) => '<w:p><w:r><w:rPr><w:b/><w:color w:val="7A4FA8"/><w:sz w:val="26"/></w:rPr><w:t>'.$text.'</w:t></w:r></w:p>';
+        $body = fn (string $text) => '<w:p><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>'.$text.'</w:t></w:r></w:p>';
+        $document = '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="7A4FA8"/><w:sz w:val="44"/></w:rPr><w:t>Jane Doe</w:t></w:r></w:p>'
+            .$body('jane@example.com').$heading('Work History').$body(self::CV_TEXT).$heading('Profile').$body('Developer.').$heading('Skills').$body('Laravel');
+
+        $first = $this->postJson('/tailor', [...$this->tailorPayload(), 'cv_file' => $this->docx($document, raw: true)])->assertOk();
+
+        $design = TailoredResume::firstOrFail()->design_profile;
+        $this->assertSame('docx', $design['source']);
+        $this->assertSame('center', $design['header_align']);
+        $this->assertSame('#7a4fa8', $design['heading_color']);
+        $this->assertSame(['experience', 'summary', 'skills'], array_slice($design['section_order'], 0, 3));
+
+        $refined = $this->withCredentials()->withCookie(config('session.cookie'), TailoredResume::firstOrFail()->session_id)
+            ->postJson($first->json('refine_url'), ['confirmed_skills' => ['Docker']])
+            ->assertOk();
+
+        foreach ([$first->json('html'), $refined->json('html')] as $html) {
+            $this->assertStringContainsString('color: #7a4fa8', $html);
+            $this->assertMatchesRegularExpression('/<h2>Work History<\/h2>.*<h2>Profile<\/h2>.*<h2>Skills<\/h2>/s', $html);
+        }
+    }
+
     public function test_large_job_descriptions_are_trimmed_before_calling_groq(): void
     {
         Http::fakeSequence('api.groq.test/*')
@@ -304,12 +334,19 @@ class ResumeTailorTest extends TestCase
         return ['choices' => [['message' => ['content' => json_encode($content)]]]];
     }
 
-    protected function docx(string $text): UploadedFile
+    /**
+     * A DOCX with the text in one plain paragraph, or (with $raw) the given WordprocessingML body.
+     */
+    protected function docx(string $text, bool $raw = false): UploadedFile
     {
+        $document = $raw
+            ? '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'.$text.'</w:body></w:document>'
+            : '<w:document><w:body><w:p><w:r><w:t>'.$text.'</w:t></w:r></w:p></w:body></w:document>';
+
         $path = tempnam(sys_get_temp_dir(), 'cv').'.docx';
         $zip = new ZipArchive;
         $zip->open($path, ZipArchive::CREATE);
-        $zip->addFromString('word/document.xml', '<w:document><w:body><w:p><w:r><w:t>'.$text.'</w:t></w:r></w:p></w:body></w:document>');
+        $zip->addFromString('word/document.xml', $document);
         $zip->close();
 
         return new UploadedFile($path, 'cv.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', null, true);

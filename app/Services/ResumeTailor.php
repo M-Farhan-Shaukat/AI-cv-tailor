@@ -15,19 +15,22 @@ class ResumeTailor
     /**
      * @param  array{job_title: string, keywords: array<int, array<string, mixed>>}|null  $jobAnalysis  Reuse a previous analysis of the same JD.
      * @param  array<int, string>  $confirmedSkills
+     * @param  array<string, mixed>  $design  Design of the uploaded CV (see {@see ResumeDesign}); the tailored resume is rendered in it.
      * @return array{
      *     job_title: string,
      *     keywords: array<int, array<string, mixed>>,
      *     original: array<string, mixed>,
      *     tailored: array<string, mixed>,
      *     resume: array<string, mixed>,
+     *     design: array<string, mixed>,
      *     html: string,
      *     plain_text: string,
      *     added_keywords: array<int, array{term: string, importance: string, evidence: string}>
      * }
      */
-    public function tailor(string $cvText, string $jobDescription, ?array $jobAnalysis = null, array $confirmedSkills = []): array
+    public function tailor(string $cvText, string $jobDescription, ?array $jobAnalysis = null, array $confirmedSkills = [], array $design = []): array
     {
+        $design = ResumeDesign::normalize($design);
         $jobAnalysis ??= $this->groq->extractJobKeywords($jobDescription);
         $jobTitle = $jobAnalysis['job_title'];
         $keywords = $jobAnalysis['keywords'];
@@ -39,9 +42,9 @@ class ResumeTailor
         $resume['headline'] = $resume['headline'] ?: $jobTitle;
 
         $evidence = $this->verifiedEvidence($resume['keyword_coverage'], $cvText, $confirmedSkills);
-        $resume = $this->ensureKeywordCoverage($resume, $keywords, $original, $evidence, $confirmedSkills);
+        $resume = $this->ensureKeywordCoverage($resume, $keywords, $original, $evidence, $confirmedSkills, $design);
 
-        $html = $this->render($resume);
+        $html = $this->render($resume, $design);
         $plainText = $this->toPlainText($html);
         $tailored = $this->scorer->score($plainText, $keywords, $jobTitle);
 
@@ -68,6 +71,7 @@ class ResumeTailor
             'original' => $original,
             'tailored' => $tailored,
             'resume' => $resume,
+            'design' => $design,
             'html' => $html,
             'plain_text' => $plainText,
             'added_keywords' => $addedKeywords,
@@ -75,11 +79,28 @@ class ResumeTailor
     }
 
     /**
+     * Render the resume in the design of the uploaded CV: its fonts, colours, layout, section order and headings.
+     *
      * @param  array<string, mixed>  $resume
+     * @param  array<string, mixed>  $design
      */
-    public function render(array $resume): string
+    public function render(array $resume, array $design = []): string
     {
-        return view('resume.ats', ['resume' => $resume])->render();
+        $design = ResumeDesign::normalize($design);
+
+        $sections = collect($design['section_order'])
+            ->filter(fn (string $section) => filled($resume[$section] ?? null))
+            ->mapWithKeys(fn (string $section) => [$section => ResumeDesign::title($design, $section, $this->scorer)])
+            ->all();
+
+        $needsUnicodeFont = (bool) preg_match('/[^\x{0000}-\x{00FF}]/u', (string) json_encode($resume, JSON_UNESCAPED_UNICODE));
+
+        return view('resume.ats', [
+            'resume' => $resume,
+            'design' => $design,
+            'sections' => $sections,
+            'fontStack' => ResumeDesign::fontStack($design, $needsUnicodeFont),
+        ])->render();
     }
 
     /**
@@ -135,11 +156,12 @@ class ResumeTailor
      * @param  array{matched: array<int, array<string, string>>}  $original
      * @param  array<string, string>  $evidence
      * @param  array<int, string>  $confirmedSkills
+     * @param  array<string, mixed>  $design
      * @return array<string, mixed>
      */
-    protected function ensureKeywordCoverage(array $resume, array $keywords, array $original, array $evidence, array $confirmedSkills): array
+    protected function ensureKeywordCoverage(array $resume, array $keywords, array $original, array $evidence, array $confirmedSkills, array $design): array
     {
-        $plainText = $this->toPlainText($this->render($resume));
+        $plainText = $this->toPlainText($this->render($resume, $design));
         $originallyMatched = array_map('mb_strtolower', array_column($original['matched'], 'term'));
         $confirmed = array_map('mb_strtolower', $confirmedSkills);
 

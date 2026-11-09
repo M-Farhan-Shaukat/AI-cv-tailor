@@ -42,14 +42,15 @@ Scoring is done in **PHP, not the LLM**, so results are reproducible and compara
 | Component | Weight | What it checks |
 |---|---|---|
 | Keyword match | 70% | Required (×3) and preferred (×1) keyword coverage |
-| Job title match | 10% | Exact title, or 70% credit for the core title without seniority words |
-| Standard sections | 10% | Summary, Experience, Skills, Education headings present |
-| Contact details | 10% | Parseable email + phone (50% each) |
+| Job title match | 10% | Exact title; 70% for the core title without seniority words; 50% for a related role noun (Developer ↔ Engineer ↔ Programmer) |
+| Standard sections | 10% | Summary, Experience, Skills, Education present as real heading lines (a sentence that mentions "experience" does not count) |
+| Contact details | 10% | Parseable email + phone (50% each); a phone needs 9-15 digits, so date ranges like "2019 - 2022" do not count |
 
 Additional rules:
 - Keywords found only in the skills list earn **85% credit** and cap the total at **95**.
 - A tailored resume whose score only rose because the tool added keywords is capped at **95**.
 - Matching is whole-word/phrase-aware and alias-aware; it handles spaces, hyphens, and slashes.
+- Spelling variants match like an ATS parser: plurals ("API"/"APIs", "technology"/"technologies"), separators ("Node.js"/"NodeJS", "Front-end"/"Frontend", 5+ letter terms only) and word forms via a light stemmer ("unit tests"/"unit testing"; single words only when they are practice words like "testing", never product names like "Express").
 
 ### 2.4 Truthful resume rewriting
 - The LLM rewrites **every** role, bullet, project, and section — it is explicitly told a light edit is a failure.
@@ -63,8 +64,8 @@ Additional rules:
 - Before/after score gauge with a full breakdown of matched/missing keywords.
 - "Changes" list explaining what was rewritten and why.
 - **Refine** step: the candidate confirms skills they have that the CV missed; the resume is re-tailored without re-analyzing the JD.
-- ATS-safe HTML resume rendered server-side (`resources/views/resume/ats.blade.php`).
-- PDF download via `barryvdh/laravel-dompdf` (A4 portrait).
+- ATS-safe HTML resume rendered server-side (`resources/views/resume/ats.blade.php`) **in the design of the uploaded CV**: `ResumeDesignExtractor` reads font family, font sizes, colours, header alignment, heading case/rules, paper size, margins, and section order/headings from the DOCX styles or the PDF content stream. The profile is stored in `tailored_resumes.design_profile` and reused by refine and download. Original headings are kept only when the ATS scorer still recognises them; the layout stays single-column.
+- PDF download via `barryvdh/laravel-dompdf` (A4 or Letter, matching the uploaded CV).
 
 ### 2.6 Access control & abuse prevention
 - Guest-friendly: no account required to try the tailor or scan jobs.
@@ -168,10 +169,12 @@ TailoredResume (DB)  ──►  JSON response (scores, HTML, download/refine URL
 | `app/Services/AtsScorer.php` | Deterministic scoring, keyword matching, section detection |
 | `app/Services/GroqService.php` | LLM prompts, JSON handling, retries, prompt shrinking, normalization |
 | `app/Services/ResumeTextExtractor.php` | PDF/DOCX text extraction and cleanup |
+| `app/Services/ResumeDesignExtractor.php` | Reads the uploaded CV's visual design (DOCX styles / PDF content stream) |
+| `app/Services/ResumeDesign.php` | Design profile defaults, sanitising (values go into CSS), font stacks, section titles |
 | `app/Models/TailoredResume.php` | Persistence model (JSON casts) |
 | `app/Providers/AppServiceProvider.php` | `resume-tailor` rate limiter |
 | `resources/js/Pages/ResumeTailor.jsx` | Main UI, upload, progress stages, score gauges |
-| `resources/views/resume/ats.blade.php` | ATS-safe resume template used for HTML and PDF |
+| `resources/views/resume/ats.blade.php` | ATS-safe resume template (styled from the design profile) used for HTML and PDF |
 | `app/Http/Controllers/JobScanController.php` | Job list/detail, filters, scan dispatch |
 | `app/Http/Controllers/SavedJobController.php` | Saved jobs and application status |
 | `app/Http/Controllers/SavedSearchController.php` | Saved searches, alerts toggle, manual run |

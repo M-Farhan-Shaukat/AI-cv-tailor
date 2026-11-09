@@ -105,4 +105,67 @@ class AtsScorerTest extends TestCase
         $this->assertSame(1, $report['skills_only']);
         $this->assertSame(95, $report['score']);
     }
+
+    public function test_spelling_variants_of_a_keyword_count_as_matches(): void
+    {
+        $report = (new AtsScorer)->scoreKeywords(
+            'Built NodeJS and Java Script services, exposed a REST API, wrote unit tests and deployed to Front-end teams. Evaluated new technologies.',
+            [
+                ['term' => 'Node.js'],
+                ['term' => 'JavaScript'],
+                ['term' => 'REST APIs'],
+                ['term' => 'unit testing'],
+                ['term' => 'Frontend'],
+                ['term' => 'technology'],
+            ],
+        );
+
+        $this->assertSame([], $report['missing']);
+    }
+
+    public function test_spelling_tolerance_does_not_create_false_matches(): void
+    {
+        $report = (new AtsScorer)->scoreKeywords('Expressed interest in JavaScript and docking stations.', [
+            ['term' => 'Express'],
+            ['term' => 'Java'],
+            ['term' => 'Docker'],
+        ]);
+
+        $this->assertSame([], $report['matched']);
+    }
+
+    public function test_date_ranges_are_not_mistaken_for_a_phone_number(): void
+    {
+        $scorer = new AtsScorer;
+
+        $this->assertSame(50, $scorer->score("jane@example.com\nAcme | 2019 - 2022\nBeta | Jan 2016 - Dec 2018", [])['breakdown']['contact']['score']);
+
+        foreach (['+92 301 0017469', '(555) 123-4567', '+44 20 7946 0958', '0301-0017469'] as $phone) {
+            $this->assertSame(100, $scorer->score("jane@example.com\n{$phone}", [])['breakdown']['contact']['score'], $phone);
+        }
+    }
+
+    public function test_only_heading_lines_count_as_sections(): void
+    {
+        $scorer = new AtsScorer;
+
+        $this->assertSame('experience', $scorer->sectionKeyForHeading('Relevant Work Experience'));
+        $this->assertSame('skills', $scorer->sectionKeyForHeading('TECHNICAL SKILLS & TOOLS:'));
+        $this->assertSame('projects', $scorer->sectionKeyForHeading('Key Projects'));
+        $this->assertNull($scorer->sectionKeyForHeading('Software engineer with experience'));
+        $this->assertNull($scorer->sectionKeyForHeading('Skills: PHP, Laravel'));
+        $this->assertNull($scorer->sectionKeyForHeading('Education 2016 - 2020'));
+
+        $report = $scorer->score("Jane Doe\nSoftware engineer with experience\nGreat skills in teams", [], '');
+        $this->assertSame(0, $report['breakdown']['sections']['score']);
+    }
+
+    public function test_a_related_role_title_gets_partial_title_credit(): void
+    {
+        $scorer = new AtsScorer;
+
+        $this->assertSame(50, $scorer->score('Software Developer at Acme', [], 'Senior Software Engineer')['breakdown']['job_title']['score']);
+        $this->assertSame(70, $scorer->score('Software Engineer at Acme', [], 'Senior Software Engineer')['breakdown']['job_title']['score']);
+        $this->assertSame(0, $scorer->score('Data Analyst at Acme', [], 'Senior Software Engineer')['breakdown']['job_title']['score']);
+    }
 }

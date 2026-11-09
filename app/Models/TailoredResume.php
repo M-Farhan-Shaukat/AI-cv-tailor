@@ -20,6 +20,7 @@ class TailoredResume extends Model
         'extracted_cv_text',
         'tailored_cv_json',
         'tailored_cv_html',
+        'design_profile',
         'match_score',
         'original_score',
         'pdf_path',
@@ -30,6 +31,7 @@ class TailoredResume extends Model
     protected $casts = [
         'ats_keywords' => 'array',
         'tailored_cv_json' => 'array',
+        'design_profile' => 'array',
         'score_report' => 'array',
     ];
 
