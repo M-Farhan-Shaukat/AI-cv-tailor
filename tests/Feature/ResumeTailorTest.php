@@ -331,6 +331,20 @@ class ResumeTailorTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_the_home_page_prefills_a_job_posting_and_limits_it_to_15000_words(): void
+    {
+        $shortPosting = JobPosting::factory()->create(['description' => 'Build Laravel APIs with MySQL.']);
+        $longPosting = JobPosting::factory()->create(['description' => str_repeat('Laravel ', 15005)]);
+
+        $this->get('/?job='.$shortPosting->id)
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('prefill.job_description', 'Build Laravel APIs with MySQL.'));
+
+        $this->get('/?job='.$longPosting->id)
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('prefill.job_description', rtrim(str_repeat('Laravel ', 15000))));
+    }
+
     public function test_a_413_is_retried_with_a_smaller_prompt(): void
     {
         Http::fakeSequence('api.groq.test/*')

@@ -53,10 +53,27 @@ class ResumeTailorController extends Controller
             'prefill' => $jobPosting ? [
                 'job_posting_id' => $jobPosting->id,
                 'job_title' => $jobPosting->title,
-                'job_description' => Str::words($jobPosting->description, self::MAX_JD_WORDS, ''),
+                'job_description' => $this->limitWords((string) $jobPosting->description, self::MAX_JD_WORDS),
             ] : null,
             'maxJobDescriptionWords' => self::MAX_JD_WORDS,
         ]);
+    }
+
+    /**
+     * Keep the first $maxWords words of the text. Unlike Str::words(), which compiles the limit into a
+     * regex quantifier and fails with "regular expression is too large" for limits in the thousands,
+     * this splits on whitespace and works for any limit.
+     */
+    protected function limitWords(string $text, int $maxWords): string
+    {
+        $trimmed = ltrim($text);
+        $words = preg_split('/\s+/u', $trimmed, $maxWords + 1, PREG_SPLIT_OFFSET_CAPTURE);
+
+        if ($words === false || count($words) <= $maxWords) {
+            return $text;
+        }
+
+        return rtrim(substr($trimmed, 0, $words[$maxWords][1]));
     }
 
     public function tailor(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, ResumeDesignExtractor $designExtractor, UserResumeStore $resumes): JsonResponse
