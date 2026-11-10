@@ -8,6 +8,14 @@
     $contactLine = collect($resume['contact'] ?? [])->filter()->implode('  |  ');
     $joinParts = fn (array $parts, string $glue = '  |  ') => collect($parts)->filter()->implode($glue);
     $margins = $design['margins'];
+    $headingColor = $design['heading_color'];
+    $headingRule = match ($design['heading_style']) {
+        'rule' => 'border-bottom: 0.75pt solid '.$headingColor.'; padding-bottom: 2pt;',
+        'double' => 'border-bottom: 2.25pt double '.$headingColor.'; padding-bottom: 2pt;',
+        'bar' => 'border-left: 3pt solid '.$headingColor.'; padding: 1pt 0 1pt 6pt;',
+        'band' => 'background: '.\App\Services\ResumeDesign::tint($headingColor).'; padding: 2.5pt 6pt;',
+        default => 'padding-bottom: 1pt;',
+    };
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -15,13 +23,16 @@
     <meta charset="utf-8">
     <title>{{ $resume['name'] ?: 'Resume' }}{{ $resume['headline'] ? ' - '.$resume['headline'] : '' }}</title>
     <style>
+        @foreach (\App\Services\ResumeDesign::fontFaces($design) as $face)
+        @font-face { font-family: "{{ $face['family'] }}"; font-style: normal; font-weight: {{ $face['weight'] }}; src: {!! $face['src'] !!}; }
+        @endforeach
         @page { size: {{ $design['page_size'] === 'letter' ? 'letter' : 'A4' }} portrait; margin: {{ $margins['top'] }}mm {{ $margins['right'] }}mm {{ $margins['bottom'] }}mm {{ $margins['left'] }}mm; }
         body { font-family: {!! $fontStack !!}; font-size: {{ $design['body_size'] }}pt; line-height: {{ $design['line_height'] }}; color: {{ $design['text_color'] }}; margin: 0; }
-        h1 { font-size: {{ $design['name_size'] }}pt; line-height: 1.15; color: {{ $design['name_color'] }}; text-align: {{ $design['header_align'] }}; margin: 0 0 2pt; }
+        h1 { font-size: {{ $design['name_size'] }}pt; line-height: 1.15; color: {{ $design['name_color'] }}; text-align: {{ $design['header_align'] }}; margin: 0 0 2pt;@if ($design['name_uppercase']) text-transform: uppercase; letter-spacing: 1.2pt;@endif }
         .headline { font-size: {{ $design['headline_size'] }}pt; font-weight: {{ $design['headline_bold'] ? 'bold' : 'normal' }}; text-align: {{ $design['header_align'] }}; margin: 0 0 3pt; }
-        .contact { text-align: {{ $design['header_align'] }}; margin: 0 0 6pt; }
-        h2 { font-size: {{ $design['heading_size'] }}pt; line-height: 1.2; color: {{ $design['heading_color'] }}; text-transform: {{ $design['heading_uppercase'] ? 'uppercase' : 'none' }}; letter-spacing: {{ $design['heading_uppercase'] ? '0.4pt' : '0' }}; margin: 10pt 0 4pt; padding-bottom: 2pt;@if ($design['heading_rule']) border-bottom: 0.75pt solid {{ $design['heading_color'] }};@endif }
-        h3 { font-size: {{ $design['body_size'] + 0.5 }}pt; margin: 6pt 0 1pt; }
+        .contact { text-align: {{ $design['header_align'] }}; margin: 0 0 6pt;@if ($design['header_rule']) padding-bottom: 6pt; border-bottom: 1pt solid {{ $headingColor }};@endif }
+        h2 { font-size: {{ $design['heading_size'] }}pt; line-height: 1.2; color: {{ $design['heading_color'] }}; text-transform: {{ $design['heading_uppercase'] ? 'uppercase' : 'none' }}; letter-spacing: {{ $design['heading_uppercase'] ? '0.4pt' : '0' }}; margin: 10pt 0 4pt; {!! $headingRule !!} }
+        h3 { font-size: {{ $design['body_size'] + 0.5 }}pt; color: {{ $design['accent_color'] }}; margin: 6pt 0 1pt; }
         .meta { margin: 0 0 2pt; }
         p { margin: 0 0 3pt; }
         ul { margin: 2pt 0 5pt 14pt; padding: 0; }

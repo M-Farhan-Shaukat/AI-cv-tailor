@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\JobPosting;
 use App\Models\TailoredResume;
 use App\Models\User;
+use App\Services\ResumeTailor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
@@ -283,6 +284,53 @@ class ResumeTailorTest extends TestCase
         });
     }
 
+    public function test_a_15000_word_job_description_is_condensed_to_its_requirements_before_calling_groq(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $culture = collect(range(1, 520))->map(fn (int $i) => "Moment {$i}: our people share a friendly culture with lots of social events and team lunches.");
+        $duties = collect(range(1, 480))->map(fn (int $i) => "Note {$i} explains how the wider organisation plans its quarterly roadmap and reviews.");
+        $jobDescription = implode("\n", [
+            'Laravel Developer',
+            'About us', ...$culture,
+            'The role', ...$duties->take(240),
+            'Requirements',
+            '- Strong experience with Kubernetes and REST APIs',
+            ...$duties->skip(240),
+            'Benefits', '- Health insurance and paid time off',
+        ]);
+        $words = preg_match_all('/\S+/u', $jobDescription);
+        $this->assertGreaterThan(14000, $words);
+        $this->assertLessThanOrEqual(15000, $words);
+
+        $this->postJson('/tailor', [...$this->tailorPayload(), 'job_description' => $jobDescription])->assertOk();
+
+        [$keywordRequest, $tailorRequest] = Http::recorded()->map(fn (array $pair) => $pair[0])->all();
+
+        foreach ([$keywordRequest, $tailorRequest] as $request) {
+            $userPrompt = $request['messages'][1]['content'];
+            $this->assertStringContainsString('Kubernetes and REST APIs', $userPrompt);
+            $this->assertStringNotContainsString('friendly culture', $userPrompt);
+            $this->assertStringNotContainsString('Health insurance', $userPrompt);
+        }
+        $this->assertLessThan(9000, mb_strlen($keywordRequest['messages'][1]['content']));
+        $this->assertSame('low', $keywordRequest['reasoning_effort']);
+        $this->assertSame(3000, $keywordRequest['max_completion_tokens']);
+    }
+
+    public function test_job_descriptions_over_15000_words_are_rejected(): void
+    {
+        Http::fake();
+
+        $this->postJson('/tailor', [...$this->tailorPayload(), 'job_description' => str_repeat('Laravel ', 15001)])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['job_description' => 'may not be longer than 15,000 words']);
+
+        Http::assertNothingSent();
+    }
+
     public function test_a_413_is_retried_with_a_smaller_prompt(): void
     {
         Http::fakeSequence('api.groq.test/*')
@@ -308,6 +356,62 @@ class ResumeTailorTest extends TestCase
         $this->get(route('resume.download', ['tailoredResume' => $tailored, 'token' => 'valid-access-token']))
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_a_template_restyles_the_resume_without_an_ai_call_and_keeps_the_cv_design(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()))
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $heading = fn (string $text) => '<w:p><w:r><w:rPr><w:b/><w:color w:val="7A4FA8"/><w:sz w:val="26"/></w:rPr><w:t>'.$text.'</w:t></w:r></w:p>';
+        $document = '<w:p><w:r><w:t>Jane Doe</w:t></w:r></w:p>'.$heading('Work History').'<w:p><w:r><w:t>'.self::CV_TEXT.'</w:t></w:r></w:p>'.$heading('Skills').'<w:p><w:r><w:t>Laravel</w:t></w:r></w:p>';
+
+        $first = $this->postJson('/tailor', [...$this->tailorPayload(), 'cv_file' => $this->docx($document, raw: true), 'template' => 'modern'])
+            ->assertOk()
+            ->assertJsonPath('template', 'modern');
+
+        $this->assertStringContainsString('color: #1f4e79', $first->json('html'));
+        $this->assertMatchesRegularExpression('/<h2>Work History<\/h2>.*<h2>Skills<\/h2>/s', $first->json('html'));
+        $this->assertSame('#7a4fa8', TailoredResume::firstOrFail()->design_profile['heading_color']);
+
+        $original = $this->postJson($first->json('template_url'), ['template' => 'original'])
+            ->assertOk()
+            ->assertJsonPath('template', 'original');
+
+        $this->assertStringContainsString('color: #7a4fa8', $original->json('html'));
+        $this->assertSame(TailoredResume::firstOrFail()->tailored_cv_html, $original->json('html'));
+        $tailor = app(ResumeTailor::class);
+        $this->assertSame($tailor->toPlainText($first->json('html')), $tailor->toPlainText($original->json('html')));
+        Http::assertSentCount(2);
+
+        $this->postJson($original->json('template_url'), ['template' => 'classic'])->assertOk();
+
+        $refined = $this->postJson($first->json('refine_url'), ['confirmed_skills' => ['Docker']])
+            ->assertOk()
+            ->assertJsonPath('template', 'classic');
+
+        $this->assertStringContainsString('"Times New Roman"', $refined->json('html'));
+    }
+
+    public function test_changing_the_template_validates_the_choice_and_the_owner(): void
+    {
+        $tailored = TailoredResume::create([
+            'session_id' => 'someone-else',
+            'job_description' => 'JD',
+            'extracted_cv_text' => self::CV_TEXT,
+        ]);
+
+        $this->postJson(route('resume.template', $tailored), ['template' => 'modern'])->assertForbidden();
+
+        $this->postJson(route('resume.template', ['tailoredResume' => $tailored, 'token' => 'x']), ['template' => 'fancy'])->assertForbidden();
+
+        $tailored->update(['access_token' => 'secret-token']);
+
+        $this->postJson(route('resume.template', ['tailoredResume' => $tailored, 'token' => 'secret-token']), ['template' => 'fancy'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('template');
     }
 
     public function test_refine_is_restricted_to_the_owning_session(): void

@@ -30,7 +30,10 @@ const errorMessage = (err, fallback) => {
         return 'Too many requests. Please wait a minute and try again.';
     }
     if (!err?.response) {
-        return 'The connection to the server was lost. Please try again with a shorter job description.';
+        console.error('Tailor request failed without a server response', err);
+        return err?.request
+            ? 'No response from the server. Check that the app is still running and try again.'
+            : 'Something went wrong while showing the result. Please reload the page and try again.';
     }
     return err?.response?.data?.message || err?.message || fallback;
 };
@@ -84,6 +87,83 @@ function Bar({ value, variant }) {
     );
 }
 
+const SERIF_FONTS = ['Times New Roman', 'Caladea', 'PT Serif', 'IBM Plex Serif', 'Crimson Text'];
+
+/**
+ * Miniature page for a template, drawn from the preview data the server sends with each template:
+ * typeface, name alignment and colour, heading style and density.
+ */
+function TemplateThumb({ preview }) {
+    if (!preview) {
+        return (
+            <span className="rt-thumb is-original" aria-hidden="true">
+                <i className="bi bi-file-earmark-person"></i>
+            </span>
+        );
+    }
+
+    const fallback = SERIF_FONTS.includes(preview.font) ? 'Georgia, serif' : 'Helvetica, Arial, sans-serif';
+
+    return (
+        <span
+            className={`rt-thumb ${preview.dense ? 'is-dense' : ''}`}
+            style={{ '--thumb-accent': preview.heading_color, '--thumb-name': preview.name_color }}
+            aria-hidden="true"
+        >
+            <span
+                className={`rt-thumb-name ${preview.name_uppercase ? 'is-upper' : ''}`}
+                style={{ textAlign: preview.align, fontFamily: `"${preview.font}", ${fallback}` }}
+            >
+                Jane Doe
+            </span>
+            {[0, 1].map((section) => (
+                <React.Fragment key={section}>
+                    <span className={`rt-thumb-heading is-${preview.heading_style}`}></span>
+                    <span className="rt-thumb-line"></span>
+                    <span className="rt-thumb-line is-short"></span>
+                </React.Fragment>
+            ))}
+        </span>
+    );
+}
+
+function TemplatePicker({ templates, value, onChange, disabled = false, label }) {
+    const categories = useMemo(() => ['All', ...new Set(templates.map((template) => template.category).filter((category) => category !== 'Your CV'))], [templates]);
+    const [category, setCategory] = useState('All');
+    const shown = templates.filter((template) => category === 'All' || template.category === category || template.value === 'original');
+
+    return (
+        <div>
+            <div className="rt-tabs rt-template-tabs mb-2" role="tablist" aria-label={`${label} categories`}>
+                {categories.map((name) => (
+                    <button key={name} type="button" role="tab" aria-selected={category === name} className={`rt-tab ${category === name ? 'is-active' : ''}`} onClick={() => setCategory(name)}>
+                        {name}
+                        <span className="rt-count">{name === 'All' ? templates.length : templates.filter((template) => template.category === name).length}</span>
+                    </button>
+                ))}
+            </div>
+            <div className="rt-templates" role="radiogroup" aria-label={label}>
+                {shown.map((template) => (
+                    <button
+                        key={template.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={value === template.value}
+                        className={`rt-template ${value === template.value ? 'is-active' : ''}`}
+                        onClick={() => onChange(template.value)}
+                        disabled={disabled}
+                        title={template.description}
+                    >
+                        <TemplateThumb preview={template.preview} />
+                        <span className="rt-template-label">{template.label}</span>
+                        <span className="rt-template-desc">{template.description}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function Chip({ keyword, tone, title }) {
     return (
         <span className={`rt-chip rt-chip-${tone} ${keyword.importance === 'required' ? 'rt-chip-required' : ''}`} title={title}>
@@ -92,7 +172,7 @@ function Chip({ keyword, tone, title }) {
     );
 }
 
-export default function ResumeTailor({ seo, prefill = null }) {
+export default function ResumeTailor({ seo, prefill = null, templates = [], maxJobDescriptionWords = 15000 }) {
     const [cvFile, setCvFile] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [jobDescription, setJobDescription] = useState(prefill?.job_description || '');
@@ -108,6 +188,9 @@ export default function ResumeTailor({ seo, prefill = null }) {
     const [isRefining, setIsRefining] = useState(false);
     const [refineError, setRefineError] = useState('');
     const [toast, setToast] = useState('');
+    const [template, setTemplate] = useState('original');
+    const [isSwitchingTemplate, setIsSwitchingTemplate] = useState(false);
+    const [templateError, setTemplateError] = useState('');
     const fileInput = useRef(null);
     const resultsRef = useRef(null);
     const timers = useRef([]);
@@ -121,6 +204,9 @@ export default function ResumeTailor({ seo, prefill = null }) {
         const timeout = setTimeout(() => setToast(''), 2600);
         return () => clearTimeout(timeout);
     }, [toast]);
+
+    const jobDescriptionWords = useMemo(() => (jobDescription.match(/\S+/g) || []).length, [jobDescription]);
+    const isJobDescriptionTooLong = jobDescriptionWords > maxJobDescriptionWords;
 
     const keptKeywords = useMemo(() => {
         if (!result) {
@@ -185,6 +271,10 @@ export default function ResumeTailor({ seo, prefill = null }) {
             setError(`Please paste a more detailed job description (minimum ${MIN_JD_LENGTH} characters).`);
             return;
         }
+        if (isJobDescriptionTooLong) {
+            setError(`The job description is ${jobDescriptionWords.toLocaleString()} words. Please keep it under ${maxJobDescriptionWords.toLocaleString()} words.`);
+            return;
+        }
 
         setResult(null);
         setIsProcessing(true);
@@ -194,6 +284,7 @@ export default function ResumeTailor({ seo, prefill = null }) {
             const formData = new FormData();
             formData.append('cv_file', cvFile);
             formData.append('job_description', jobDescription);
+            formData.append('template', template);
 
             if (prefill?.job_posting_id) {
                 formData.append('job_posting_id', prefill.job_posting_id);
@@ -240,6 +331,27 @@ export default function ResumeTailor({ seo, prefill = null }) {
             setRefineError(errorMessage(err, 'Could not update the resume. Please try again.'));
         } finally {
             setIsRefining(false);
+        }
+    };
+
+    const changeTemplate = async (value) => {
+        if (!result || value === result.template || isSwitchingTemplate) {
+            return;
+        }
+        setTemplateError('');
+        setIsSwitchingTemplate(true);
+
+        try {
+            const response = await axios.post(result.template_url, { template: value }, { headers: { Accept: 'application/json' } });
+            setResult((previous) => ({ ...previous, ...response.data }));
+            setTemplate(value);
+            setPreviewTab('formatted');
+            const chosen = templates.find((option) => option.value === value);
+            setToast(`Design changed to ${chosen?.label ?? value}`);
+        } catch (err) {
+            setTemplateError(errorMessage(err, 'Could not change the design. Please try again.'));
+        } finally {
+            setIsSwitchingTemplate(false);
         }
     };
 
@@ -352,9 +464,19 @@ export default function ResumeTailor({ seo, prefill = null }) {
                                             <small className={jobDescription.trim().length >= MIN_JD_LENGTH ? 'text-success' : 'text-muted'}>
                                                 {jobDescription.trim().length >= MIN_JD_LENGTH ? <><i className="bi bi-check2 me-1"></i>Looks good</> : `Min ${MIN_JD_LENGTH} characters`}
                                             </small>
-                                            <small className="text-muted">{jobDescription.length.toLocaleString()} chars</small>
+                                            <small className={isJobDescriptionTooLong ? 'text-danger fw-semibold' : 'text-muted'}>
+                                                {jobDescriptionWords.toLocaleString()} / {maxJobDescriptionWords.toLocaleString()} words
+                                            </small>
                                         </div>
                                     </div>
+
+                                    {templates.length > 0 && (
+                                        <div className="mb-4">
+                                            <label className="form-label fw-semibold">3. Choose a design</label>
+                                            <TemplatePicker templates={templates} value={template} onChange={setTemplate} disabled={isProcessing} label="Resume design" />
+                                            <small className="text-muted d-block mt-2">Every design is single-column and ATS-safe. You can switch after tailoring too.</small>
+                                        </div>
+                                    )}
 
                                     {error && (
                                         <div className="alert alert-danger d-flex gap-2 align-items-start py-2 rt-fade-in" role="alert">
@@ -606,6 +728,17 @@ export default function ResumeTailor({ seo, prefill = null }) {
                                         ))}
                                     </div>
                                 </div>
+                                {templates.length > 0 && (
+                                    <div className="mb-3">
+                                        <div className="d-flex align-items-center gap-2 mb-2">
+                                            <span className="fw-semibold small">Design</span>
+                                            {isSwitchingTemplate && <span className="spinner-border spinner-border-sm text-secondary" aria-label="Applying design"></span>}
+                                            <small className="text-muted ms-auto d-none d-sm-inline">Changing the design keeps your text and ATS score the same.</small>
+                                        </div>
+                                        <TemplatePicker templates={templates} value={result.template} onChange={changeTemplate} disabled={isSwitchingTemplate} label="Resume design" />
+                                        {templateError && <div className="text-danger small mt-2" role="alert">{templateError}</div>}
+                                    </div>
+                                )}
                                 {previewTab === 'formatted'
                                     ? <iframe title="Tailored resume preview" srcDoc={result.html} className="rt-preview-frame"></iframe>
                                     : <pre className="rt-plain">{result.plain_text}</pre>}

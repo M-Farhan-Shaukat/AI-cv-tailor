@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\ResumeTemplate;
 use App\Models\JobPosting;
 use App\Models\TailoredResume;
+use App\Services\JobDescriptionCondenser;
 use App\Services\LlmBudgetExceededException;
+use App\Services\ResumeDesign;
 use App\Services\ResumeDesignExtractor;
 use App\Services\ResumeTailor;
 use App\Services\ResumeTextExtractor;
@@ -15,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -28,6 +32,12 @@ class ResumeTailorController extends Controller
      */
     protected const MAX_CV_CHARACTERS = 8000;
 
+    /**
+     * Longest job description accepted. Long postings are condensed locally before any AI call
+     * (see {@see JobDescriptionCondenser}), so length does not affect the token budget.
+     */
+    public const MAX_JD_WORDS = 15000;
+
     public function index(Request $request): InertiaResponse
     {
         $jobPosting = $request->integer('job') > 0
@@ -35,6 +45,7 @@ class ResumeTailorController extends Controller
             : null;
 
         return Inertia::render('ResumeTailor', [
+            'templates' => ResumeTemplate::options(),
             'seo' => [
                 'title' => 'AI-Powered Resume Tailor & ATS Optimizer',
                 'description' => 'Upload your CV, paste a job description, and get an ATS-optimized tailored resume with match score instantly.',
@@ -42,8 +53,9 @@ class ResumeTailorController extends Controller
             'prefill' => $jobPosting ? [
                 'job_posting_id' => $jobPosting->id,
                 'job_title' => $jobPosting->title,
-                'job_description' => Str::limit($jobPosting->description, 30000, ''),
+                'job_description' => Str::words($jobPosting->description, self::MAX_JD_WORDS, ''),
             ] : null,
+            'maxJobDescriptionWords' => self::MAX_JD_WORDS,
         ]);
     }
 
@@ -53,9 +65,19 @@ class ResumeTailorController extends Controller
 
         $request->validate([
             'cv_file' => 'required|file|mimes:pdf,docx|max:5120',
-            'job_description' => 'required|string|min:50|max:100000',
+            'job_description' => [
+                'required', 'string', 'min:50', 'max:250000',
+                function (string $attribute, string $value, \Closure $fail): void {
+                    if (preg_match_all('/\S+/u', $value) > self::MAX_JD_WORDS) {
+                        $fail('The job description may not be longer than '.number_format(self::MAX_JD_WORDS).' words.');
+                    }
+                },
+            ],
             'job_posting_id' => 'nullable|integer|exists:job_postings,id',
+            'template' => ['nullable', Rule::enum(ResumeTemplate::class)],
         ]);
+
+        $template = $request->enum('template', ResumeTemplate::class) ?? ResumeTemplate::Original;
 
         $file = $request->file('cv_file');
         $jobDescription = trim($request->input('job_description'));
@@ -67,17 +89,17 @@ class ResumeTailorController extends Controller
             ]);
         }
 
-        $design = $designExtractor->extract($file, $cvText);
+        $design = ResumeDesign::normalize($designExtractor->extract($file, $cvText));
 
         try {
-            $result = $resumeTailor->tailor($cvText, $jobDescription, design: $design);
+            $result = $resumeTailor->tailor($cvText, $jobDescription, design: ResumeDesign::withTemplate($design, $template));
         } catch (LlmBudgetExceededException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
         } catch (RuntimeException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_BAD_GATEWAY);
         }
 
-        $tailored = DB::transaction(function () use ($request, $file, $jobDescription, $cvText, $result, $resumes): TailoredResume {
+        $tailored = DB::transaction(function () use ($request, $file, $jobDescription, $cvText, $result, $resumes, $design, $template): TailoredResume {
             if ($request->user() !== null) {
                 $resumes->savePrimary($request->user(), $file->getClientOriginalName(), $cvText);
             }
@@ -90,6 +112,8 @@ class ResumeTailorController extends Controller
                 'original_filename' => $file->getClientOriginalName(),
                 'job_description' => $jobDescription,
                 'extracted_cv_text' => $cvText,
+                'design_profile' => $design,
+                'template' => $template,
                 ...$this->attributesFromResult($result, []),
             ]);
         });
@@ -129,7 +153,7 @@ class ResumeTailorController extends Controller
                 $tailoredResume->job_description,
                 $jobAnalysis,
                 $confirmedSkills,
-                $tailoredResume->design_profile ?? [],
+                ResumeDesign::withTemplate($tailoredResume->design_profile, $tailoredResume->template),
             );
         } catch (LlmBudgetExceededException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_TOO_MANY_REQUESTS);
@@ -140,6 +164,35 @@ class ResumeTailorController extends Controller
         $tailoredResume->update($this->attributesFromResult($result, $confirmedSkills));
 
         return $this->resultResponse($tailoredResume, $result, $confirmedSkills);
+    }
+
+    /**
+     * Re-render the tailored resume in another template. Only the look changes, so no AI call is made
+     * and the ATS text and scores stay the same.
+     */
+    public function changeTemplate(Request $request, TailoredResume $tailoredResume, ResumeTailor $resumeTailor): JsonResponse
+    {
+        $this->authorizeAccess($request, $tailoredResume);
+
+        $request->validate([
+            'template' => ['required', Rule::enum(ResumeTemplate::class)],
+        ]);
+
+        $template = $request->enum('template', ResumeTemplate::class);
+
+        $tailoredResume->update([
+            'template' => $template,
+            'tailored_cv_html' => $resumeTailor->render(
+                $tailoredResume->tailored_cv_json,
+                ResumeDesign::withTemplate($tailoredResume->design_profile, $template),
+            ),
+        ]);
+
+        return response()->json([
+            'template' => $template->value,
+            'html' => $tailoredResume->tailored_cv_html,
+            ...$this->resultUrls($tailoredResume),
+        ]);
     }
 
     public function downloadPdf(Request $request, TailoredResume $tailoredResume): Response
@@ -153,7 +206,10 @@ class ResumeTailorController extends Controller
         $filename = Str::slug($name ?: 'tailored').'-resume.pdf';
 
         $paper = ($tailoredResume->design_profile['page_size'] ?? 'a4') === 'letter' ? 'letter' : 'a4';
-        $response = Pdf::loadHTML($html)->setPaper($paper, 'portrait')->download($filename);
+        $response = Pdf::loadHTML($html)
+            ->setOption('isFontSubsettingEnabled', true)
+            ->setPaper($paper, 'portrait')
+            ->download($filename);
         $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
         $response->headers->set('Pragma', 'no-cache');
 
@@ -192,7 +248,6 @@ class ResumeTailorController extends Controller
         return [
             'tailored_cv_json' => $result['resume'],
             'tailored_cv_html' => $result['html'],
-            'design_profile' => $result['design'],
             'match_score' => $result['tailored']['score'],
             'original_score' => $result['original']['score'],
             'ats_keywords' => array_column($result['tailored']['matched'], 'term'),
@@ -213,12 +268,6 @@ class ResumeTailorController extends Controller
      */
     protected function resultResponse(TailoredResume $tailored, array $result, array $confirmedSkills): JsonResponse
     {
-        $routeParameters = fn (): array => [
-            'tailoredResume' => $tailored,
-            'token' => $tailored->access_token,
-            'v' => substr(md5((string) $tailored->tailored_cv_html), 0, 12),
-        ];
-
         return response()->json([
             'success' => true,
             'tailored_id' => $tailored->id,
@@ -230,8 +279,26 @@ class ResumeTailorController extends Controller
             'changes' => $result['resume']['changes'],
             'html' => $result['html'],
             'plain_text' => $result['plain_text'],
-            'download_url' => route('resume.download', $routeParameters(), false),
-            'refine_url' => route('resume.refine', $routeParameters(), false),
+            'template' => $tailored->template->value,
+            ...$this->resultUrls($tailored),
         ]);
+    }
+
+    /**
+     * @return array{download_url: string, refine_url: string, template_url: string}
+     */
+    protected function resultUrls(TailoredResume $tailored): array
+    {
+        $parameters = [
+            'tailoredResume' => $tailored,
+            'token' => $tailored->access_token,
+            'v' => substr(md5((string) $tailored->tailored_cv_html), 0, 12),
+        ];
+
+        return [
+            'download_url' => route('resume.download', $parameters, false),
+            'refine_url' => route('resume.refine', $parameters, false),
+            'template_url' => route('resume.template', $parameters, false),
+        ];
     }
 }

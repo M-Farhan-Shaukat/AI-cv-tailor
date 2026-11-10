@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ResumeTemplate;
 use App\Services\ResumeDesign;
 use App\Services\ResumeDesignExtractor;
 use App\Services\ResumeTailor;
@@ -104,6 +105,61 @@ class ResumeDesignTest extends TestCase
         $this->assertSame('#7a4fa8', $operations[0]['color']);
         $this->assertSame('#333333', $operations[2]['color']);
         $this->assertCount(1, $rules);
+    }
+
+    public function test_every_template_renders_a_pdf_whose_text_an_ats_can_read(): void
+    {
+        $tailor = app(ResumeTailor::class);
+        $extractor = app(ResumeTextExtractor::class);
+
+        foreach (ResumeTemplate::cases() as $template) {
+            $design = ResumeDesign::withTemplate(['font_name' => 'Calibri'], $template);
+            $html = $tailor->render($this->resume(), $design);
+            $pdf = Pdf::loadHTML($html)->setOption('isFontSubsettingEnabled', true)->output();
+            $path = tempnam(sys_get_temp_dir(), 'cv').'.pdf';
+            file_put_contents($path, $pdf);
+
+            $text = $extractor->extract(new UploadedFile($path, 'cv.pdf', 'application/pdf', null, true));
+
+            $this->assertStringNotContainsString('<table', $html, "[{$template->value}] must stay table-free.");
+            $this->assertStringContainsStringIgnoringCase('Jane Doe', $text, "[{$template->value}] name is not extractable.");
+            $this->assertStringContainsString('Built REST APIs in Laravel', $text, "[{$template->value}] bullets are not extractable.");
+            $this->assertStringContainsStringIgnoringCase('Experience', $text, "[{$template->value}] headings are not extractable.");
+
+            $typeface = ResumeDesign::TYPEFACES[$design['typeface']] ?? null;
+            if ($typeface !== null) {
+                $this->assertStringContainsString(str_replace(' ', '', $typeface['family']), str_replace(['_', '-', ' '], '', $pdf), "[{$template->value}] font is not embedded.");
+            }
+        }
+    }
+
+    public function test_a_calibri_cv_keeps_its_look_with_the_bundled_carlito_font_but_templates_do_not_inherit_it(): void
+    {
+        $design = ResumeDesign::normalize(['font' => 'serif', 'font_name' => 'Calibri Light']);
+
+        $this->assertSame('carlito', $design['typeface']);
+        $this->assertSame('sans', $design['font']);
+        $this->assertStringContainsString('font-family: "Carlito"', app(ResumeTailor::class)->render($this->resume(), $design));
+        $this->assertStringContainsString('url("fonts/resume/Carlito-Bold.ttf")', app(ResumeTailor::class)->render($this->resume(), $design));
+
+        $this->assertSame('', ResumeDesign::withTemplate($design, ResumeTemplate::Classic)['typeface']);
+        $this->assertSame('lato', ResumeDesign::withTemplate($design, ResumeTemplate::Ocean)['typeface']);
+    }
+
+    public function test_untrusted_typeface_heading_style_and_accent_values_are_rejected(): void
+    {
+        $design = ResumeDesign::normalize([
+            'typeface' => '../../../etc/passwd',
+            'heading_style' => 'band; } body { display: none',
+            'heading_rule' => false,
+            'accent_color' => 'red; } h1 { display: none',
+            'text_color' => '#222222',
+        ]);
+
+        $this->assertSame('', $design['typeface']);
+        $this->assertSame('plain', $design['heading_style']);
+        $this->assertSame('#222222', $design['accent_color']);
+        $this->assertStringNotContainsString('display: none', app(ResumeTailor::class)->render($this->resume(), $design));
     }
 
     public function test_render_uses_the_cv_headings_only_when_an_ats_recognises_them(): void

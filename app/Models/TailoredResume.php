@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ResumeTemplate;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -21,6 +22,7 @@ class TailoredResume extends Model
         'tailored_cv_json',
         'tailored_cv_html',
         'design_profile',
+        'template',
         'match_score',
         'original_score',
         'pdf_path',
@@ -28,10 +30,15 @@ class TailoredResume extends Model
         'score_report',
     ];
 
+    protected $attributes = [
+        'template' => 'original',
+    ];
+
     protected $casts = [
         'ats_keywords' => 'array',
         'tailored_cv_json' => 'array',
         'design_profile' => 'array',
+        'template' => ResumeTemplate::class,
         'score_report' => 'array',
     ];
 

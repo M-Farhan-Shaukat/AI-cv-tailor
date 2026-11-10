@@ -18,6 +18,13 @@ class GroqService
     protected const MAX_KEYWORD_JD_CHARACTERS = 8000;
 
     /**
+     * Room for the reasoning plus up to 40 keywords with aliases. With less, a long JD can exhaust the budget
+     * mid-JSON and Groq rejects the reply (json_validate_failed). Keyword listing needs little reasoning, so
+     * that step runs at low effort.
+     */
+    protected const KEYWORD_COMPLETION_TOKENS = 3000;
+
+    /**
      * The rewrite already receives the extracted JD keywords, so most of the budget goes to the CV:
      * trimming the CV drops its middle sections (often Projects) from the tailored resume.
      */
@@ -33,7 +40,7 @@ class GroqService
 
     protected string $reasoningEffort;
 
-    public function __construct(protected LlmUsageTracker $usage)
+    public function __construct(protected LlmUsageTracker $usage, protected JobDescriptionCondenser $condenser)
     {
         $this->apiKey = config('services.groq.key');
         $this->model = config('services.groq.model') ?: 'openai/gpt-oss-120b';
@@ -57,7 +64,7 @@ class GroqService
           (e.g. "code review", "unit testing", "documentation", "debugging"), domain knowledge, certifications,
           degree level and field of study (e.g. "Bachelor's degree", "Computer Science"), and the job title itself.
         - Only the 3-5 most important soft skills, phrased as an ATS would search them ("communication", "problem-solving").
-        - Aim for 15-35 keywords. A short or vague JD gives fewer keywords; never pad the list.
+        - Aim for 15-35 keywords and never more than 40. A short or vague JD gives fewer keywords; never pad the list.
 
         WHAT TO IGNORE (never return these):
         - Company marketing, benefits, culture, EEO statements and application/referral instructions
@@ -73,7 +80,7 @@ class GroqService
           Standard combined terms like "CI/CD" stay as one.
         - "aliases": alternative spellings, abbreviations and close variants an ATS also accepts, e.g.
           "JavaScript" -> ["JS"], "Amazon Web Services" -> ["AWS"], "Bachelor's degree" -> ["Bachelor", "BS", "BSc", "B.S."],
-          "software development" -> ["software engineering"], "code review" -> ["code reviews", "peer review"]. Empty array if none.
+          "software development" -> ["software engineering"], "code review" -> ["code reviews", "peer review"]. At most 3; empty array if none.
         - "category": one of hard_skill, tool, soft_skill, certification, education, job_title.
         - "importance": "required" if the JD marks it as must-have/required/qualification or repeats it, otherwise "preferred".
           For "X or Y" alternatives mark each "preferred".
@@ -82,11 +89,16 @@ class GroqService
         Return ONLY JSON: {"job_title": string, "keywords": [{"term": string, "aliases": [string], "category": string, "importance": "required"|"preferred"}]}
         PROMPT;
 
-        $fullJobDescription = $jobDescription;
-        $jobDescription = $this->limitForPrompt($jobDescription, self::MAX_KEYWORD_JD_CHARACTERS);
-        $shrink = fn (): array => [$systemPrompt, "JOB DESCRIPTION:\n".$this->limitForPrompt($fullJobDescription, 4000), 1200];
+        $shrink = fn (): array => [$systemPrompt, "JOB DESCRIPTION:\n".$this->condenser->condense($jobDescription, 4000), self::KEYWORD_COMPLETION_TOKENS];
 
-        $result = $this->chatJson($systemPrompt, "JOB DESCRIPTION:\n".$jobDescription, 2000, $shrink, 'keyword');
+        $result = $this->chatJson(
+            $systemPrompt,
+            "JOB DESCRIPTION:\n".$this->condenser->condense($jobDescription, self::MAX_KEYWORD_JD_CHARACTERS),
+            self::KEYWORD_COMPLETION_TOKENS,
+            $shrink,
+            'keyword',
+            reasoningEffort: 'low',
+        );
 
         $keywords = collect($result['keywords'] ?? [])
             ->filter(fn ($keyword) => is_array($keyword) && filled($keyword['term'] ?? null))
@@ -198,7 +210,7 @@ class GroqService
 
         $buildUserPrompt = function (float $scale) use ($jobTitle, $formatKeywords, $keywordReport, $confirmedSkills, $jobDescription, $cvText): string {
             $cvText = $this->limitForPrompt($cvText, (int) round(self::MAX_REWRITE_CV_CHARACTERS * $scale));
-            $jobDescription = $this->limitForPrompt($jobDescription, (int) round(self::MAX_REWRITE_JD_CHARACTERS * $scale));
+            $jobDescription = $this->condenser->condense($jobDescription, (int) round(self::MAX_REWRITE_JD_CHARACTERS * $scale));
 
             return 'TARGET JOB TITLE: '.($jobTitle ?: 'see JD')."\n\n"
                 ."JD KEYWORDS ALREADY IN THE CV (keep them and make them prominent):\n".($formatKeywords($keywordReport['matched']) ?: 'none')."\n\n"
@@ -237,7 +249,7 @@ class GroqService
      * @param  (callable(): array{0: string, 1: string, 2: int})|null  $shrink  Rebuilds a smaller prompt when Groq rejects the request size.
      * @return array<string, mixed>
      */
-    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null, string $scope = 'llm'): array
+    protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null, string $scope = 'llm', ?string $reasoningEffort = null): array
     {
         if (empty($this->apiKey)) {
             throw new RuntimeException('GROQ_API_KEY is missing. Please set it in your .env file.');
@@ -261,7 +273,7 @@ class GroqService
             ];
 
             if (str_contains($this->model, 'gpt-oss')) {
-                $payload['reasoning_effort'] = $this->reasoningEffort;
+                $payload['reasoning_effort'] = $reasoningEffort ?? $this->reasoningEffort;
             }
 
             $startedAt = microtime(true);
