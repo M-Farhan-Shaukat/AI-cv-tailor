@@ -38,6 +38,7 @@ class ResumeTailor
         $original = $this->scorer->score($cvText, $keywords, $jobTitle);
         $resume = $this->groq->tailorResume($cvText, $jobDescription, $jobTitle, $original, $confirmedSkills);
 
+        $resume = $this->restoreMissingProjects($resume, $cvText);
         $resume['experience'] = $this->sortByMostRecent($resume['experience']);
         $resume['headline'] = $resume['headline'] ?: $jobTitle;
 
@@ -190,6 +191,148 @@ class ResumeTailor
         ])->all();
 
         return $resume;
+    }
+
+    /**
+     * The AI sometimes shortlists projects instead of rewriting all of them. It lists every CV project name
+     * first ("cv_project_names"); any listed project missing from the rewrite is copied back from the CV
+     * as written, and projects are kept in CV order.
+     *
+     * @param  array<string, mixed>  $resume
+     * @return array<string, mixed>
+     */
+    protected function restoreMissingProjects(array $resume, string $cvText): array
+    {
+        $names = $resume['cv_project_names'] ?? [];
+        unset($resume['cv_project_names']);
+
+        $lines = array_values(array_filter(array_map('trim', preg_split('/\R/u', $cvText) ?: []), 'strlen'));
+        $projectsHeading = collect($lines)->search(fn (string $line) => $this->scorer->sectionKeyForHeading($line) === 'projects');
+        $firstLine = $projectsHeading === false ? 0 : $projectsHeading + 1;
+
+        $nameLines = collect($names)
+            ->mapWithKeys(fn (string $name) => [$name => $this->findProjectLine($lines, $name, $firstLine)])
+            ->filter(fn (?int $index) => $index !== null)
+            ->sort();
+
+        if ($nameLines->isEmpty()) {
+            return $resume;
+        }
+
+        $remaining = collect($resume['projects']);
+        $ordered = [];
+        $restored = [];
+
+        foreach ($nameLines as $name => $index) {
+            $matchKey = $remaining->search(fn (array $project) => $this->sameProject($project['name'], $name));
+
+            if ($matchKey !== false) {
+                $ordered[] = $remaining->pull($matchKey);
+
+                continue;
+            }
+
+            $nextBoundary = $nameLines->first(fn (int $other) => $other > $index) ?? count($lines);
+            $ordered[] = $this->projectFromCv(array_slice($lines, $index, $nextBoundary - $index));
+            $restored[] = $name;
+        }
+
+        $resume['projects'] = [...$ordered, ...$remaining->values()->all()];
+
+        if ($restored !== []) {
+            $resume['changes'][] = 'Kept '.count($restored).' project(s) from your CV unchanged because the rewrite left them out: '.implode(', ', $restored).'.';
+        }
+
+        return $resume;
+    }
+
+    /**
+     * @param  array<int, string>  $lines
+     */
+    protected function findProjectLine(array $lines, string $name, int $firstLine): ?int
+    {
+        foreach ([$firstLine, 0] as $start) {
+            for ($index = $start; $index < count($lines); $index++) {
+                if (mb_strlen($lines[$index]) <= 160 && $this->sameProject($lines[$index], $name)) {
+                    return $index;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Names match when one starts with the other, or both start with the same word and most words of the
+     * shorter one appear in the longer ("SeeATS - AI-Powered ATS" vs "SeeATS — AI-Powered Applicant Tracking
+     * System (ATS)"). Bracketed parts and URLs are ignored, so shared domains don't make projects look alike.
+     */
+    protected function sameProject(string $first, string $second): bool
+    {
+        $core = fn (string $name) => $this->comparable(preg_replace('/\([^)]*\)|\b(?:https?:\/\/|www\.)?[\w-]+(?:\.[\w-]+)+\S*/iu', ' ', $name));
+        $first = $core($first);
+        $second = $core($second);
+
+        if ($first === '' || $second === '') {
+            return false;
+        }
+
+        if (str_starts_with($first.' ', $second.' ') || str_starts_with($second.' ', $first.' ')) {
+            return true;
+        }
+
+        $firstWords = array_values(array_unique(explode(' ', $first)));
+        $secondWords = array_values(array_unique(explode(' ', $second)));
+
+        if ($firstWords[0] !== $secondWords[0]) {
+            return false;
+        }
+        $shorter = count($firstWords) <= count($secondWords) ? $firstWords : $secondWords;
+        $longer = $shorter === $firstWords ? $secondWords : $firstWords;
+
+        return count(array_intersect($shorter, $longer)) / count($shorter) >= 0.75;
+    }
+
+    /**
+     * Build a project entry from its lines in the CV: the name line, a "Technologies:" line, links and bullets.
+     * Lines wrapped by the PDF are joined back into one bullet. The block ends at the next section heading.
+     *
+     * @param  array<int, string>  $block
+     * @return array{name: string, technologies: array<int, string>, link: string, bullets: array<int, string>}
+     */
+    protected function projectFromCv(array $block): array
+    {
+        $project = ['name' => $this->groq->toAtsSafeText(array_shift($block)), 'technologies' => [], 'link' => '', 'bullets' => []];
+        $entries = [];
+
+        foreach ($block as $line) {
+            if ($this->scorer->sectionKeyForHeading($line) !== null) {
+                break;
+            }
+
+            $previous = $entries === [] ? null : $entries[array_key_last($entries)];
+            $continues = $previous !== null && (preg_match('/^\p{Ll}/u', $line) || preg_match('/(,|;|&|\(|-|\band|\bwith|\bfor|\bof)$/iu', $previous));
+
+            if ($continues) {
+                $entries[array_key_last($entries)] .= ' '.$line;
+            } else {
+                $entries[] = $line;
+            }
+        }
+
+        foreach ($entries as $entry) {
+            $entry = $this->groq->toAtsSafeText($entry);
+
+            if (preg_match('/^(?:technologies|tech stack|tools|stack|built with)\s*:\s*(.+)$/iu', $entry, $matches)) {
+                $project['technologies'] = array_values(array_filter(array_map('trim', explode(',', $matches[1])), 'strlen'));
+            } elseif ($project['link'] === '' && preg_match('/^(?:https?:\/\/|www\.)\S+$/iu', $entry)) {
+                $project['link'] = $entry;
+            } elseif ($entry !== '') {
+                $project['bullets'][] = $entry;
+            }
+        }
+
+        return $project;
     }
 
     /**

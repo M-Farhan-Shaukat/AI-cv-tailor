@@ -132,6 +132,82 @@ class ResumeTailorTest extends TestCase
         $this->assertLessThan(strpos($html, 'Old Corp'), strpos($html, 'Acme'));
     }
 
+    public function test_projects_and_sections_outside_the_template_are_kept(): void
+    {
+        $resume = [
+            ...$this->tailoredResume(),
+            'projects' => [['name' => 'Invoice Portal', 'technologies' => ['Laravel'], 'bullets' => ['Built a billing portal.']]],
+            'additional_sections' => [
+                ['title' => 'Achievements', 'items' => ['Won the 2023 company hackathon.']],
+                ['title' => 'Empty', 'items' => []],
+            ],
+        ];
+
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($resume));
+
+        $html = $this->postJson('/tailor', $this->tailorPayload())->assertOk()->json('html');
+
+        $this->assertStringContainsString('<h3>Invoice Portal</h3>', $html);
+        $this->assertStringContainsString('<h2>Achievements</h2>', $html);
+        $this->assertStringContainsString('Won the 2023 company hackathon.', $html);
+        $this->assertStringNotContainsString('<h2>Empty</h2>', $html);
+    }
+
+    public function test_projects_the_rewrite_leaves_out_are_restored_from_the_cv_in_cv_order(): void
+    {
+        $lines = [
+            'Jane Doe', 'Experience', 'Developer at Acme since 2022. Built web services in Laravel.',
+            'Projects',
+            'Books - Accounting System (books.example.com)', 'Technologies: Laravel, MySQL', 'Built ledger and invoice modules',
+            'Expense Tracker (expense.example.com)', 'Technologies: Laravel, React.js,', 'Bootstrap',
+            'Built approval workflows for trips and', 'daily expenses with role-based access',
+            'Payroll Engine', 'Built payroll runs for 200 staff',
+            'Education', 'BS Computer Science',
+        ];
+        $paragraphs = collect($lines)->map(fn (string $line) => '<w:p><w:r><w:t>'.$line.'</w:t></w:r></w:p>')->implode('');
+
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply([
+                ...$this->tailoredResume(),
+                'cv_project_names' => ['Books - Accounting System (books.example.com)', 'Expense Tracker (expense.example.com)', 'Payroll Engine'],
+                'projects' => [
+                    ['name' => 'Payroll Engine', 'technologies' => [], 'bullets' => ['Built REST APIs for payroll runs.']],
+                    ['name' => 'Books - Accounting System', 'technologies' => ['Laravel'], 'bullets' => ['Built REST APIs for ledgers.']],
+                ],
+            ]));
+
+        $response = $this->postJson('/tailor', [
+            ...$this->tailorPayload(),
+            'cv_file' => $this->docx($paragraphs, raw: true),
+        ])->assertOk();
+
+        $projects = TailoredResume::firstOrFail()->tailored_cv_json['projects'];
+
+        $this->assertSame(['Books - Accounting System', 'Expense Tracker (expense.example.com)', 'Payroll Engine'], array_column($projects, 'name'));
+        $this->assertSame(['Laravel', 'React.js', 'Bootstrap'], $projects[1]['technologies']);
+        $this->assertSame(['Built approval workflows for trips and daily expenses with role-based access'], $projects[1]['bullets']);
+        $this->assertSame(['Built REST APIs for payroll runs.'], $projects[2]['bullets']);
+        $this->assertStringContainsString('Expense Tracker', collect($response->json('changes'))->last());
+        $this->assertArrayNotHasKey('cv_project_names', TailoredResume::firstOrFail()->tailored_cv_json);
+    }
+
+    public function test_the_rewrite_prompt_forbids_dropping_cv_sections(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $this->postJson('/tailor', $this->tailorPayload())->assertOk();
+
+        $systemPrompt = Http::recorded()->last()[0]['messages'][0]['content'];
+
+        $this->assertStringContainsString('never removes sections or entries', $systemPrompt);
+        $this->assertStringContainsString('"additional_sections"', $systemPrompt);
+    }
+
     public function test_confirmed_skills_are_added_without_re_extracting_keywords(): void
     {
         Http::fakeSequence('api.groq.test/*')

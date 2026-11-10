@@ -2,7 +2,8 @@
     /**
      * Single-column, table-free resume so every ATS parser reads it top to bottom.
      * $design (fonts, sizes, colours, alignment, page set-up) mirrors the uploaded CV; see App\Services\ResumeDesign.
-     * $sections lists the non-empty sections in the CV's own order, keyed to their headings.
+     * $sections lists the non-empty sections in the CV's own order, keyed to their headings; CV sections outside
+     * that list (achievements, awards, ...) come from $resume['additional_sections'] and are rendered last.
      */
     $contactLine = collect($resume['contact'] ?? [])->filter()->implode('  |  ');
     $joinParts = fn (array $parts, string $glue = '  |  ') => collect($parts)->filter()->implode($glue);
@@ -102,6 +103,15 @@
                 <p>{{ implode(', ', $resume['languages']) }}</p>
                 @break
         @endswitch
+    @endforeach
+
+    @foreach ($resume['additional_sections'] ?? [] as $extra)
+        <h2>{{ $extra['title'] }}</h2>
+        <ul>
+            @foreach ($extra['items'] as $item)
+                <li>{{ $item }}</li>
+            @endforeach
+        </ul>
     @endforeach
 </body>
 </html>

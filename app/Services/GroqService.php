@@ -17,9 +17,13 @@ class GroqService
      */
     protected const MAX_KEYWORD_JD_CHARACTERS = 8000;
 
-    protected const MAX_REWRITE_JD_CHARACTERS = 3500;
+    /**
+     * The rewrite already receives the extracted JD keywords, so most of the budget goes to the CV:
+     * trimming the CV drops its middle sections (often Projects) from the tailored resume.
+     */
+    protected const MAX_REWRITE_JD_CHARACTERS = 2000;
 
-    protected const MAX_REWRITE_CV_CHARACTERS = 6500;
+    protected const MAX_REWRITE_CV_CHARACTERS = 7500;
 
     protected ?string $apiKey;
 
@@ -138,6 +142,14 @@ class GroqService
           soft skills or traits ("attention to detail", "time management") unless the CV demonstrates them.
         - Contact details, locations and spoken languages: copy only what the CV states.
 
+        COMPLETENESS (never drop content):
+        - The tailored resume must contain EVERY section and EVERY entry of the CV: all roles, all projects, all degrees,
+          all certifications/courses, all languages, and any other section (achievements, awards, publications,
+          volunteering, activities, interests, references, etc.). Tailoring changes wording and order of emphasis, it
+          never removes sections or entries, even ones that look irrelevant to the job.
+        - Sections that do not fit the fields below go in "additional_sections" with the CV's own heading as "title"
+          and one string per entry in "items".
+
         REWRITE RULES (be thorough - a lightly edited CV is a failure):
         - "headline": the exact JD job title when the candidate's background fits it (even if more senior), else their closest real title.
         - "summary": 3-4 sentences, no first person. Start with the exact JD job title. Include years of experience if derivable
@@ -148,7 +160,9 @@ class GroqService
           Rewrite EVERY bullet - do not copy CV bullets verbatim. Start each with a strong action verb, mirror the JD's
           responsibility wording where the CV supports it, keep real metrics, and weave in JD keywords.
           3-6 bullets per role (2-4 for internships). If the CV lists achievements separately from roles, attach them to the right role.
-        - "projects": keep every project; 2-4 rewritten bullets each with JD keywords.
+        - "cv_project_names": first list the name of EVERY project in the CV, in CV order, copied as written.
+        - "projects": one entry for EACH name in "cv_project_names" - never merge, skip or shortlist projects, even ones
+          unrelated to the job. 2-4 rewritten bullets each with JD keywords (1-3 when the CV has more than 4 projects).
         - "education": keep every entry. Expand an abbreviated degree name when it is unambiguous and keep the abbreviation,
           e.g. "Associate Degree Program in Computer Science (ADPCS)".
         - Use the JD's spelling for every keyword (e.g. "Node.js" not "NodeJS"); write full form plus acronym once,
@@ -166,10 +180,12 @@ class GroqService
           "summary": string,
           "skills": [{"category": string, "items": [string]}],
           "experience": [{"title": string, "company": string, "location": string, "start_date": string, "end_date": string, "bullets": [string]}],
+          "cv_project_names": [string],
           "projects": [{"name": string, "technologies": [string], "link": string, "bullets": [string]}],
           "education": [{"degree": string, "institution": string, "location": string, "start_date": string, "end_date": string, "details": string}],
           "certifications": [string],
           "languages": [string],
+          "additional_sections": [{"title": string, "items": [string]}],
           "keyword_coverage": [{"term": string, "supported": boolean, "evidence": string}],
           "changes": [string]
         }
@@ -341,7 +357,7 @@ class GroqService
     /**
      * Replace typographic characters that some ATS parsers mangle with plain equivalents.
      */
-    protected function toAtsSafeText(string $value): string
+    public function toAtsSafeText(string $value): string
     {
         $value = strtr($value, [
             "\u{2010}" => '-', "\u{2011}" => '-', "\u{2012}" => '-', "\u{2013}" => '-', "\u{2014}" => '-', "\u{2212}" => '-',
@@ -387,6 +403,7 @@ class GroqService
                     'bullets' => $strings($job['bullets'] ?? []),
                 ])
                 ->all(),
+            'cv_project_names' => $strings($resume['cv_project_names'] ?? []),
             'projects' => collect($list($resume['projects'] ?? []))
                 ->map(fn (array $project) => [
                     'name' => $string($project['name'] ?? ''),
@@ -407,6 +424,11 @@ class GroqService
                 ->all(),
             'certifications' => $strings($resume['certifications'] ?? []),
             'languages' => $strings($resume['languages'] ?? []),
+            'additional_sections' => collect($list($resume['additional_sections'] ?? []))
+                ->map(fn (array $section) => ['title' => $string($section['title'] ?? ''), 'items' => $strings($section['items'] ?? [])])
+                ->filter(fn (array $section) => $section['title'] !== '' && $section['items'] !== [])
+                ->values()
+                ->all(),
             'keyword_coverage' => collect($list($resume['keyword_coverage'] ?? []))
                 ->filter(fn (array $item) => $string($item['term'] ?? '') !== '')
                 ->map(fn (array $item) => [
