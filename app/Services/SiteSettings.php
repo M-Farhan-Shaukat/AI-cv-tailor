@@ -277,6 +277,25 @@ class SiteSettings
     }
 
     /**
+     * Every saved value with secrets decrypted, for moving the setup to another installation
+     * (php artisan app:export-setup). Only ever written to a private file, never shown in the panel.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function export(): array
+    {
+        Cache::forget(self::CACHE_KEY);
+
+        return collect($this->stored())
+            ->map(fn (array $values, string $group): array => collect($values)
+                ->map(fn (mixed $value, string $field): mixed => (self::GROUPS[$group]['fields'][$field]['type'] ?? null) === 'secret' ? $this->decrypt($value) : $value)
+                ->reject(fn (mixed $value): bool => $value === null)
+                ->all())
+            ->filter(fn (array $values, string $group): bool => $values !== [] && isset(self::GROUPS[$group]))
+            ->all();
+    }
+
+    /**
      * @return array<string, array<string, mixed>>
      */
     protected function stored(): array
