@@ -5,18 +5,21 @@ import 'bootstrap/dist/js/bootstrap.bundle.min.js';
 
 import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
-import { createRoot } from 'react-dom/client';
-
-const appName = import.meta.env.VITE_APP_NAME || 'AI Resume Tailor';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 
 createInertiaApp({
-    title: (title) => `${title} - ${appName}`,
+    title: (title) => title,
     resolve: (name) => resolvePageComponent(`./Pages/${name}.jsx`, import.meta.glob('./Pages/**/*.jsx')),
     setup({ el, App, props }) {
-        const root = createRoot(el);
-        root.render(<App {...props} />);
+        // Pages rendered on the server (SSR) are hydrated; otherwise the app mounts fresh.
+        if (el.dataset.serverRendered === 'true') {
+            hydrateRoot(el, <App {...props} />);
+            return;
+        }
+
+        createRoot(el).render(<App {...props} />);
     },
     progress: {
-        color: '#0d6efd',
+        color: '#4f46e5',
     },
 });

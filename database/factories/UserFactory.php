@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
@@ -41,5 +42,36 @@ class UserFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
         ]);
+    }
+
+    public function admin(): static
+    {
+        return $this->state(fn (array $attributes) => ['role' => UserRole::Admin]);
+    }
+
+    public function superAdmin(): static
+    {
+        return $this->state(fn (array $attributes) => ['role' => UserRole::SuperAdmin]);
+    }
+
+    public function suspended(): static
+    {
+        return $this->state(fn (array $attributes) => ['suspended_at' => now()]);
+    }
+
+    /**
+     * Indicate that the user has an active Pro subscription, as Cashier stores it after a Stripe webhook.
+     */
+    public function pro(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'stripe_id' => 'cus_'.Str::random(14),
+        ])->afterCreating(fn (User $user) => $user->subscriptions()->create([
+            'type' => 'default',
+            'stripe_id' => 'sub_'.Str::random(14),
+            'stripe_status' => 'active',
+            'stripe_price' => 'price_pro_monthly',
+            'quantity' => 1,
+        ]));
     }
 }

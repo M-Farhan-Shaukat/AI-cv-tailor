@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\JobPosting;
 use App\Models\TailoredResume;
 use App\Models\User;
+use App\Services\GroqService;
 use App\Services\ResumeTailor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -52,6 +53,55 @@ class ResumeTailorTest extends TestCase
         $this->assertStringStartsWith('/download/', $response->json('download_url'));
         $this->assertStringStartsWith('/tailor/', $response->json('refine_url'));
         $this->assertStringContainsString('token=', $response->json('refine_url'));
+    }
+
+    public function test_the_tailored_resume_opens_on_its_own_page_with_the_designs(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $tailoring = $this->postJson('/tailor', $this->tailorPayload())->assertOk();
+        $tailored = TailoredResume::firstOrFail();
+
+        $this->assertSame(route('resume.show', ['tailoredResume' => $tailored, 'token' => $tailored->access_token], false), $tailoring->json('result_url'));
+
+        $this->get($tailoring->json('result_url'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('TailoredResume', false)
+                ->where('result.tailored_id', $tailored->id)
+                ->where('result.job_title', 'Laravel Developer')
+                ->where('result.tailored_score.score', $tailoring->json('tailored_score.score'))
+                ->where('result.original_score.score', $tailoring->json('original_score.score'))
+                ->where('result.plain_text', $tailoring->json('plain_text'))
+                ->where('result.template', 'original')
+                ->has('templates', 16));
+    }
+
+    public function test_the_result_page_needs_the_owner_or_the_access_token(): void
+    {
+        $tailored = TailoredResume::create([
+            'session_id' => 'someone-else',
+            'access_token' => 'secret-token',
+            'job_description' => 'JD',
+            'extracted_cv_text' => self::CV_TEXT,
+            'tailored_cv_html' => '<html><body><h1>Jane Doe</h1></body></html>',
+            'tailored_cv_json' => ['name' => 'Jane Doe', 'changes' => []],
+            'score_report' => ['job_title' => 'Laravel Developer', 'original' => ['score' => 40], 'tailored' => ['score' => 80], 'added_keywords' => []],
+        ]);
+
+        $this->get(route('resume.show', $tailored))->assertForbidden();
+        $this->get(route('resume.show', ['tailoredResume' => $tailored, 'token' => 'wrong']))->assertForbidden();
+        $this->get(route('resume.show', ['tailoredResume' => $tailored, 'token' => 'secret-token']))->assertOk();
+
+        $unfinished = TailoredResume::create(['access_token' => 'other-token', 'job_description' => 'JD', 'extracted_cv_text' => self::CV_TEXT]);
+        $this->get(route('resume.show', ['tailoredResume' => $unfinished, 'token' => 'other-token']))->assertNotFound();
+    }
+
+    public function test_the_tailor_page_does_not_offer_designs_before_tailoring(): void
+    {
+        $this->get('/')->assertOk()->assertInertia(fn ($page) => $page->component('ResumeTailor', false)->missing('templates'));
     }
 
     public function test_authenticated_tailoring_stores_the_cv_and_links_the_job_posting(): void
@@ -265,6 +315,40 @@ class ResumeTailorTest extends TestCase
         }
     }
 
+    public function test_scanning_scores_the_cv_with_fixes_without_rewriting_it(): void
+    {
+        Http::fakeSequence('api.groq.test/*')->push($this->keywordReply());
+
+        $response = $this->postJson('/scan', $this->tailorPayload());
+
+        $response->assertOk()
+            ->assertJsonPath('job_title', 'Laravel Developer')
+            ->assertJsonPath('score.breakdown.keywords.status', 'fail')
+            ->assertJsonPath('score.breakdown.contact.tip', 'Add a phone number as plain text at the top.')
+            ->assertJsonPath('score.missing.0.term', 'REST APIs');
+
+        $this->assertStringStartsWith('Add these required keywords if you have the experience: REST APIs, software development.', $response->json('score.breakdown.keywords.tip'));
+        Http::assertSentCount(1);
+        $this->assertDatabaseCount('tailored_resumes', 0);
+    }
+
+    public function test_the_same_job_description_reuses_its_keywords_so_scores_repeat(): void
+    {
+        Http::fakeSequence('api.groq.test/*')
+            ->push($this->keywordReply())
+            ->push($this->groqReply($this->tailoredResume()));
+
+        $scan = $this->postJson('/scan', $this->tailorPayload())->assertOk();
+
+        $payload = $this->tailorPayload();
+        $payload['job_description'] = "  \n".str_replace('. ', ".\n\n", $payload['job_description']);
+        $tailored = $this->postJson('/tailor', $payload)->assertOk();
+
+        Http::assertSentCount(2);
+        $this->assertDatabaseCount('job_description_analyses', 1);
+        $this->assertSame($scan->json('score.score'), $tailored->json('original_score.score'));
+    }
+
     public function test_large_job_descriptions_are_trimmed_before_calling_groq(): void
     {
         Http::fakeSequence('api.groq.test/*')
@@ -439,13 +523,13 @@ class ResumeTailorTest extends TestCase
         $this->postJson(route('resume.refine', $tailored), ['confirmed_skills' => ['Docker']])->assertForbidden();
     }
 
-    public function test_it_returns_a_readable_error_when_groq_rejects_the_key(): void
+    public function test_it_returns_a_busy_message_without_key_details_when_groq_rejects_every_key(): void
     {
         Http::fake(['api.groq.test/*' => Http::response(['error' => ['message' => 'Invalid API Key']], 401)]);
 
         $this->postJson('/tailor', $this->tailorPayload())
             ->assertStatus(502)
-            ->assertJsonPath('message', 'Groq rejected the API key. Check GROQ_API_KEY in your .env file.');
+            ->assertJsonPath('message', GroqService::BUSY_MESSAGE);
     }
 
     public function test_it_rejects_a_cv_without_extractable_text(): void

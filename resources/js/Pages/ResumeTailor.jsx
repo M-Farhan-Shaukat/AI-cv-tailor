@@ -1,7 +1,8 @@
-import { Head } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import axios from 'axios';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NavBar from '../Components/NavBar';
+import { BREAKDOWN_ORDER, errorMessage, KeywordGroups, ScoreChecklist, ScoreGauge, UpgradeNotice, UsageMeter } from '../Components/TailorUi';
 import MainLayout from '../Layouts/MainLayout';
 
 const STAGES = [
@@ -16,163 +17,63 @@ const STAGES = [
 const ALLOWED_TYPES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MIN_JD_LENGTH = 50;
-const BREAKDOWN_ORDER = ['keywords', 'job_title', 'sections', 'contact'];
 
-const scoreTone = (score) => (score >= 75 ? 'success' : score >= 50 ? 'warning' : 'danger');
-const toneColor = { success: 'var(--rt-success)', warning: 'var(--rt-warning)', danger: 'var(--rt-danger)' };
-
-const errorMessage = (err, fallback) => {
-    const errors = err?.response?.data?.errors;
-    if (errors) {
-        return Object.values(errors).flat()[0];
-    }
-    if (err?.response?.status === 429) {
-        return 'Too many requests. Please wait a minute and try again.';
-    }
-    if (!err?.response) {
-        console.error('Tailor request failed without a server response', err);
-        return err?.request
-            ? 'No response from the server. Check that the app is still running and try again.'
-            : 'Something went wrong while showing the result. Please reload the page and try again.';
-    }
-    return err?.response?.data?.message || err?.message || fallback;
-};
-
-function ScoreGauge({ score, caption }) {
-    const radius = 52;
-    const circumference = 2 * Math.PI * radius;
-    const [shown, setShown] = useState(0);
-
-    useEffect(() => {
-        const frame = requestAnimationFrame(() => setShown(score));
-        return () => cancelAnimationFrame(frame);
-    }, [score]);
+function ScanReport({ scan, isProcessing, onTailor }) {
+    const score = scan.score;
+    const potential = Math.min(100, score.score + BREAKDOWN_ORDER.reduce((total, key) => total + (score.breakdown[key]?.gain ?? 0), 0));
 
     return (
-        <div className="rt-gauge">
-            <svg viewBox="0 0 120 120" role="img" aria-label={`${caption}: ${score}%`}>
-                <circle className="rt-gauge-track" cx="60" cy="60" r={radius} fill="none" strokeWidth="10" />
-                <circle
-                    className="rt-gauge-value"
-                    cx="60"
-                    cy="60"
-                    r={radius}
-                    fill="none"
-                    strokeWidth="10"
-                    strokeLinecap="round"
-                    stroke={toneColor[scoreTone(score)]}
-                    strokeDasharray={circumference}
-                    strokeDashoffset={circumference * (1 - shown / 100)}
-                />
-            </svg>
-            <div className="rt-gauge-label">
-                <span className="rt-gauge-number" style={{ color: toneColor[scoreTone(score)] }}>{score}%</span>
-                <span className="rt-gauge-caption">{caption}</span>
+        <div className="rt-overlap d-grid gap-4 rt-fade-in" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <section className="rt-card">
+                <div className="p-4 p-lg-5 rt-card-body">
+                    <div className="row g-4 align-items-center">
+                        <div className="col-lg-4 d-flex justify-content-center">
+                            <div className="rt-gauge-slot"><ScoreGauge score={score.score} caption="ATS match" /></div>
+                        </div>
+                        <div className="col-lg-8">
+                            {scan.job_title && <span className="badge rounded-pill text-bg-light border mb-2">{scan.job_title}</span>}
+                            <h2 className="h4 fw-bold mb-2">Your CV matches {score.score}% of this job</h2>
+                            <p className="text-muted mb-3">
+                                Found <strong>{score.matched.length}</strong> of <strong>{score.matched.length + (score.missing_total ?? score.missing.length)}</strong> job keywords,
+                                including <strong>{score.required_matched}/{score.required_total}</strong> required ones.
+                                {potential > score.score && <> Fixing the items below could raise it to about <strong>{potential}%</strong>.</>}
+                            </p>
+                            <p className="text-muted small mb-3">
+                                <i className="bi bi-info-circle me-1"></i>
+                                An estimate of how well your CV matches this job, scored the way keyword-based ATS tools rank CVs. Each employer's system works differently.
+                            </p>
+                            <button type="button" className="btn rt-btn-primary px-4" onClick={onTailor} disabled={isProcessing}>
+                                <i className="bi bi-magic me-2"></i>Tailor my CV to fix this
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div className="row g-4">
+                <div className="col-lg-6">
+                    <section className="rt-card h-100">
+                        <div className="p-4 rt-card-body">
+                            <h2 className="rt-card-title mb-3"><i className="bi bi-list-check"></i>Checks and fixes</h2>
+                            <ScoreChecklist breakdown={score.breakdown} />
+                        </div>
+                    </section>
+                </div>
+                <div className="col-lg-6">
+                    <section className="rt-card h-100">
+                        <div className="p-4 rt-card-body">
+                            <h2 className="rt-card-title mb-1"><i className="bi bi-tags"></i>Job keywords</h2>
+                            <p className="text-muted small mb-3">Green = found, amber = only in your skills list, red = missing.</p>
+                            <KeywordGroups matched={score.matched} missing={score.missing} hiddenCount={score.missing_hidden ?? 0} />
+                        </div>
+                    </section>
+                </div>
             </div>
         </div>
     );
 }
 
-function Bar({ value, variant }) {
-    const [width, setWidth] = useState(0);
-    useEffect(() => {
-        const frame = requestAnimationFrame(() => setWidth(value));
-        return () => cancelAnimationFrame(frame);
-    }, [value]);
-
-    return (
-        <div className={`rt-bar ${variant === 'before' ? 'rt-bar-before' : ''}`}>
-            <span style={{ width: `${width}%`, background: variant === 'before' ? undefined : toneColor[scoreTone(value)] }}></span>
-        </div>
-    );
-}
-
-const SERIF_FONTS = ['Times New Roman', 'Caladea', 'PT Serif', 'IBM Plex Serif', 'Crimson Text'];
-
-/**
- * Miniature page for a template, drawn from the preview data the server sends with each template:
- * typeface, name alignment and colour, heading style and density.
- */
-function TemplateThumb({ preview }) {
-    if (!preview) {
-        return (
-            <span className="rt-thumb is-original" aria-hidden="true">
-                <i className="bi bi-file-earmark-person"></i>
-            </span>
-        );
-    }
-
-    const fallback = SERIF_FONTS.includes(preview.font) ? 'Georgia, serif' : 'Helvetica, Arial, sans-serif';
-
-    return (
-        <span
-            className={`rt-thumb ${preview.dense ? 'is-dense' : ''}`}
-            style={{ '--thumb-accent': preview.heading_color, '--thumb-name': preview.name_color }}
-            aria-hidden="true"
-        >
-            <span
-                className={`rt-thumb-name ${preview.name_uppercase ? 'is-upper' : ''}`}
-                style={{ textAlign: preview.align, fontFamily: `"${preview.font}", ${fallback}` }}
-            >
-                Jane Doe
-            </span>
-            {[0, 1].map((section) => (
-                <React.Fragment key={section}>
-                    <span className={`rt-thumb-heading is-${preview.heading_style}`}></span>
-                    <span className="rt-thumb-line"></span>
-                    <span className="rt-thumb-line is-short"></span>
-                </React.Fragment>
-            ))}
-        </span>
-    );
-}
-
-function TemplatePicker({ templates, value, onChange, disabled = false, label }) {
-    const categories = useMemo(() => ['All', ...new Set(templates.map((template) => template.category).filter((category) => category !== 'Your CV'))], [templates]);
-    const [category, setCategory] = useState('All');
-    const shown = templates.filter((template) => category === 'All' || template.category === category || template.value === 'original');
-
-    return (
-        <div>
-            <div className="rt-tabs rt-template-tabs mb-2" role="tablist" aria-label={`${label} categories`}>
-                {categories.map((name) => (
-                    <button key={name} type="button" role="tab" aria-selected={category === name} className={`rt-tab ${category === name ? 'is-active' : ''}`} onClick={() => setCategory(name)}>
-                        {name}
-                        <span className="rt-count">{name === 'All' ? templates.length : templates.filter((template) => template.category === name).length}</span>
-                    </button>
-                ))}
-            </div>
-            <div className="rt-templates" role="radiogroup" aria-label={label}>
-                {shown.map((template) => (
-                    <button
-                        key={template.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={value === template.value}
-                        className={`rt-template ${value === template.value ? 'is-active' : ''}`}
-                        onClick={() => onChange(template.value)}
-                        disabled={disabled}
-                        title={template.description}
-                    >
-                        <TemplateThumb preview={template.preview} />
-                        <span className="rt-template-label">{template.label}</span>
-                        <span className="rt-template-desc">{template.description}</span>
-                    </button>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function Chip({ keyword, tone, title }) {
-    return (
-        <span className={`rt-chip rt-chip-${tone} ${keyword.importance === 'required' ? 'rt-chip-required' : ''}`} title={title}>
-            {keyword.term}
-        </span>
-    );
-}
-
-export default function ResumeTailor({ seo, prefill = null, templates = [], maxJobDescriptionWords = 15000 }) {
+export default function ResumeTailor({ seo, prefill = null, maxJobDescriptionWords = 15000 }) {
     const [cvFile, setCvFile] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [jobDescription, setJobDescription] = useState(prefill?.job_description || '');
@@ -180,41 +81,19 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
     const [progressStage, setProgressStage] = useState(0);
     const [elapsed, setElapsed] = useState(0);
     const [error, setError] = useState('');
-    const [result, setResult] = useState(null);
-    const [keywordTab, setKeywordTab] = useState('added');
-    const [previewTab, setPreviewTab] = useState('formatted');
-    const [selectedSkills, setSelectedSkills] = useState([]);
-    const [customSkill, setCustomSkill] = useState('');
-    const [isRefining, setIsRefining] = useState(false);
-    const [refineError, setRefineError] = useState('');
-    const [toast, setToast] = useState('');
-    const [template, setTemplate] = useState('original');
-    const [isSwitchingTemplate, setIsSwitchingTemplate] = useState(false);
-    const [templateError, setTemplateError] = useState('');
+    const [upgrade, setUpgrade] = useState(null);
+    const { billing } = usePage().props;
+    const [scan, setScan] = useState(null);
+    const [isScanning, setIsScanning] = useState(false);
+    const scanRef = useRef(null);
+    const upgradeRef = useRef(null);
     const fileInput = useRef(null);
-    const resultsRef = useRef(null);
     const timers = useRef([]);
 
     useEffect(() => () => timers.current.forEach(clearInterval), []);
 
-    useEffect(() => {
-        if (!toast) {
-            return undefined;
-        }
-        const timeout = setTimeout(() => setToast(''), 2600);
-        return () => clearTimeout(timeout);
-    }, [toast]);
-
     const jobDescriptionWords = useMemo(() => (jobDescription.match(/\S+/g) || []).length, [jobDescription]);
     const isJobDescriptionTooLong = jobDescriptionWords > maxJobDescriptionWords;
-
-    const keptKeywords = useMemo(() => {
-        if (!result) {
-            return [];
-        }
-        const added = new Set(result.added_keywords.map((keyword) => keyword.term));
-        return result.tailored_score.matched.filter((keyword) => !added.has(keyword.term));
-    }, [result]);
 
     const selectFile = (file) => {
         setError('');
@@ -252,31 +131,69 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
         timers.current = [];
     };
 
-    const showResult = (data) => {
-        setResult(data);
-        setSelectedSkills([]);
-        setCustomSkill('');
-        setKeywordTab(data.added_keywords.length > 0 ? 'added' : 'missing');
+    /**
+     * A 402 means the plan does not allow this (quota used up or a Pro design): show an upgrade prompt
+     * instead of an error. Returns whether it handled the error.
+     */
+    const showUpgradeIfNeeded = (err) => {
+        if (err?.response?.status !== 402) {
+            return false;
+        }
+        setUpgrade({ message: err.response.data?.message, url: err.response.data?.upgrade_url });
+        return true;
     };
 
-    const handleSubmit = async (event) => {
-        event.preventDefault();
+    const validateInputs = () => {
         setError('');
 
         if (!cvFile) {
             setError('Please upload your CV (PDF or DOCX).');
-            return;
+            return false;
         }
         if (jobDescription.trim().length < MIN_JD_LENGTH) {
             setError(`Please paste a more detailed job description (minimum ${MIN_JD_LENGTH} characters).`);
-            return;
+            return false;
         }
         if (isJobDescriptionTooLong) {
             setError(`The job description is ${jobDescriptionWords.toLocaleString()} words. Please keep it under ${maxJobDescriptionWords.toLocaleString()} words.`);
+            return false;
+        }
+        return true;
+    };
+
+    const handleScan = async () => {
+        if (!validateInputs()) {
             return;
         }
 
-        setResult(null);
+        setScan(null);
+        setUpgrade(null);
+        setIsScanning(true);
+
+        try {
+            const formData = new FormData();
+            formData.append('cv_file', cvFile);
+            formData.append('job_description', jobDescription);
+
+            const response = await axios.post('/scan', formData, { headers: { Accept: 'application/json' } });
+            setScan(response.data);
+            setTimeout(() => scanRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+        } catch (err) {
+            setError(errorMessage(err, 'Something went wrong while checking your CV. Please try again.'));
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
+    const handleSubmit = async (event) => {
+        event?.preventDefault();
+
+        if (!validateInputs()) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
+        }
+
+        setUpgrade(null);
         setIsProcessing(true);
         startProgress();
 
@@ -284,106 +201,34 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
             const formData = new FormData();
             formData.append('cv_file', cvFile);
             formData.append('job_description', jobDescription);
-            formData.append('template', template);
 
             if (prefill?.job_posting_id) {
                 formData.append('job_posting_id', prefill.job_posting_id);
             }
 
             const response = await axios.post('/tailor', formData, { headers: { Accept: 'application/json' } });
-            showResult(response.data);
-            setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+            router.visit(response.data.result_url, {
+                onFinish: () => {
+                    stopProgress();
+                    setIsProcessing(false);
+                },
+            });
         } catch (err) {
-            setError(errorMessage(err, 'Something went wrong while tailoring your resume. Please try again.'));
-        } finally {
             stopProgress();
             setIsProcessing(false);
+            if (showUpgradeIfNeeded(err)) {
+                setTimeout(() => upgradeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+            } else {
+                setError(errorMessage(err, 'Something went wrong while tailoring your resume. Please try again.'));
+            }
         }
     };
-
-    const toggleSkill = (term) => {
-        setSelectedSkills((prev) => (prev.includes(term) ? prev.filter((skill) => skill !== term) : [...prev, term]));
-    };
-
-    const addCustomSkill = (event) => {
-        event.preventDefault();
-        const skill = customSkill.trim();
-        if (skill && !selectedSkills.some((existing) => existing.toLowerCase() === skill.toLowerCase())) {
-            setSelectedSkills((prev) => [...prev, skill]);
-        }
-        setCustomSkill('');
-    };
-
-    const handleRefine = async () => {
-        if (selectedSkills.length === 0) {
-            return;
-        }
-        setRefineError('');
-        setIsRefining(true);
-        const previousScore = result.tailored_score.score;
-
-        try {
-            const response = await axios.post(result.refine_url, { confirmed_skills: selectedSkills }, { headers: { Accept: 'application/json' } });
-            showResult(response.data);
-            const gained = response.data.tailored_score.score - previousScore;
-            setToast(gained > 0 ? `Score improved by ${gained} points` : 'Resume updated with your confirmed skills');
-        } catch (err) {
-            setRefineError(errorMessage(err, 'Could not update the resume. Please try again.'));
-        } finally {
-            setIsRefining(false);
-        }
-    };
-
-    const changeTemplate = async (value) => {
-        if (!result || value === result.template || isSwitchingTemplate) {
-            return;
-        }
-        setTemplateError('');
-        setIsSwitchingTemplate(true);
-
-        try {
-            const response = await axios.post(result.template_url, { template: value }, { headers: { Accept: 'application/json' } });
-            setResult((previous) => ({ ...previous, ...response.data }));
-            setTemplate(value);
-            setPreviewTab('formatted');
-            const chosen = templates.find((option) => option.value === value);
-            setToast(`Design changed to ${chosen?.label ?? value}`);
-        } catch (err) {
-            setTemplateError(errorMessage(err, 'Could not change the design. Please try again.'));
-        } finally {
-            setIsSwitchingTemplate(false);
-        }
-    };
-
-    const copyPlainText = async () => {
-        try {
-            await navigator.clipboard.writeText(result.plain_text);
-            setToast('Plain-text resume copied to clipboard');
-        } catch {
-            setToast('Copy failed. Select the text in the "ATS plain text" tab instead.');
-        }
-    };
-
-    const startOver = () => {
-        setResult(null);
-        clearFile();
-        setJobDescription('');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-
-    const delta = result ? result.tailored_score.score - result.original_score.score : 0;
-    const unverifiedCount = result ? result.added_keywords.filter((keyword) => !keyword.evidence).length : 0;
 
     return (
         <MainLayout seo={seo}>
             <Head title="AI Resume Tailor" />
 
-            <NavBar>
-                <a href="#how-it-works" className="rt-nav-link d-none d-sm-inline">How it works</a>
-                <span className="badge rounded-pill text-bg-light border fw-semibold d-none d-lg-inline-flex align-items-center gap-1">
-                    <i className="bi bi-lightning-charge-fill text-warning"></i>Powered by Groq
-                </span>
-            </NavBar>
+            <NavBar />
 
             <header className="rt-hero">
                 <div className="container">
@@ -470,27 +315,30 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
                                         </div>
                                     </div>
 
-                                    {templates.length > 0 && (
-                                        <div className="mb-4">
-                                            <label className="form-label fw-semibold">3. Choose a design</label>
-                                            <TemplatePicker templates={templates} value={template} onChange={setTemplate} disabled={isProcessing} label="Resume design" />
-                                            <small className="text-muted d-block mt-2">Every design is single-column and ATS-safe. You can switch after tailoring too.</small>
-                                        </div>
-                                    )}
-
                                     {error && (
                                         <div className="alert alert-danger d-flex gap-2 align-items-start py-2 rt-fade-in" role="alert">
                                             <i className="bi bi-exclamation-octagon mt-1"></i><span>{error}</span>
                                         </div>
                                     )}
 
-                                    <button className="btn rt-btn-primary w-100" type="submit" disabled={isProcessing}>
+                                    {upgrade && <UpgradeNotice upgrade={upgrade} onClose={() => setUpgrade(null)} innerRef={upgradeRef} />}
+
+                                    <button className="btn rt-btn-primary w-100" type="submit" disabled={isProcessing || isScanning}>
                                         {isProcessing ? (
                                             <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Tailoring your resume...</>
                                         ) : (
                                             <><i className="bi bi-magic me-2"></i>Analyze &amp; tailor my resume</>
                                         )}
                                     </button>
+                                    <button className="btn rt-btn-soft w-100 mt-2" type="button" onClick={handleScan} disabled={isProcessing || isScanning}>
+                                        {isScanning ? (
+                                            <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Checking your CV...</>
+                                        ) : (
+                                            <><i className="bi bi-speedometer2 me-2"></i>Just check my ATS score (free)</>
+                                        )}
+                                    </button>
+
+                                    <UsageMeter billing={billing} />
                                 </form>
                             </div>
                         </div>
@@ -519,236 +367,18 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
                                     );
                                 })}
                             </ul>
-                            <p className="text-muted small mb-0 mt-3"><i className="bi bi-info-circle me-1"></i>This usually takes 20-60 seconds on Groq's free tier.</p>
+                            <p className="text-muted small mb-0 mt-3"><i className="bi bi-info-circle me-1"></i>This usually takes 20 to 60 seconds.</p>
                         </div>
                     </section>
                 )}
 
-                {result && !isProcessing && (
-                    <div ref={resultsRef} className="rt-overlap d-grid gap-4 rt-fade-in" style={{ scrollMarginTop: '5rem', gridTemplateColumns: 'minmax(0, 1fr)' }}>
-                        <section className="rt-card">
-                            <div className="p-4 p-lg-5 rt-card-body">
-                                <div className="row g-4 align-items-center">
-                                    <div className="col-lg-5">
-                                        <div className="d-flex align-items-center justify-content-center gap-2 gap-sm-3">
-                                            <div className="rt-gauge-slot"><ScoreGauge score={result.original_score.score} caption="Your CV" /></div>
-                                            <div className="rt-arrow flex-shrink-0"><i className="bi bi-arrow-right"></i></div>
-                                            <div className="rt-gauge-slot"><ScoreGauge score={result.tailored_score.score} caption="Tailored" /></div>
-                                        </div>
-                                    </div>
-                                    <div className="col-lg-7">
-                                        <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
-                                            <span className={`rt-delta ${delta > 0 ? '' : 'is-flat'}`}>
-                                                <i className={`bi ${delta > 0 ? 'bi-graph-up-arrow' : 'bi-dash'}`}></i>
-                                                {delta > 0 ? `+${delta} points` : 'No change'}
-                                            </span>
-                                            {result.job_title && <span className="badge rounded-pill text-bg-light border">{result.job_title}</span>}
-                                        </div>
-                                        <h2 className="h4 fw-bold mb-2">Your ATS-optimized resume is ready</h2>
-                                        <p className={`text-muted ${result.tailored_score.cap_reason ? 'mb-2' : 'mb-4'}`}>
-                                            Now matching <strong>{result.tailored_score.matched.length}</strong> of{' '}
-                                            <strong>{result.tailored_score.matched.length + result.tailored_score.missing.length}</strong> job keywords, including{' '}
-                                            <strong>{result.tailored_score.required_matched}/{result.tailored_score.required_total}</strong> required ones.
-                                        </p>
-                                        {result.tailored_score.cap_reason && (
-                                            <p className="text-muted small mb-4"><i className="bi bi-info-circle me-1"></i>{result.tailored_score.cap_reason}</p>
-                                        )}
-                                        <div className="d-flex flex-wrap gap-2 rt-actions">
-                                            <a className="btn btn-success rt-btn-success px-4" href={result.download_url}>
-                                                <i className="bi bi-file-earmark-arrow-down me-2"></i>Download PDF
-                                            </a>
-                                            <button type="button" className="btn rt-btn-soft px-3" onClick={copyPlainText}>
-                                                <i className="bi bi-clipboard me-2"></i>Copy text
-                                            </button>
-                                            <button type="button" className="btn btn-outline-secondary px-3" style={{ borderRadius: '.7rem' }} onClick={startOver}>
-                                                <i className="bi bi-arrow-counterclockwise me-2"></i>New resume
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-
-                        <div className="row g-4">
-                            <div className="col-lg-5">
-                                <section className="rt-card h-100">
-                                    <div className="p-4 rt-card-body">
-                                        <h2 className="rt-card-title mb-1"><i className="bi bi-bar-chart-line"></i>Score breakdown</h2>
-                                        <p className="text-muted small mb-2">Grey = your CV, colour = tailored resume.</p>
-                                        {BREAKDOWN_ORDER.filter((key) => result.tailored_score.breakdown[key]).map((key) => [key, result.tailored_score.breakdown[key]]).map(([key, metric]) => (
-                                            <div key={key} className="rt-metric">
-                                                <div className="d-flex justify-content-between align-items-center mb-2 gap-2">
-                                                    <span className="fw-semibold">{metric.label} <span className="rt-weight ms-1">{metric.weight}%</span></span>
-                                                    <span className="small fw-semibold text-nowrap">
-                                                        <span className="text-muted">{result.original_score.breakdown[key].score}</span>
-                                                        <i className="bi bi-arrow-right mx-1 text-muted"></i>
-                                                        <span style={{ color: toneColor[scoreTone(metric.score)] }}>{metric.score}</span>
-                                                    </span>
-                                                </div>
-                                                <div className="d-grid gap-1">
-                                                    <Bar value={result.original_score.breakdown[key].score} variant="before" />
-                                                    <Bar value={metric.score} />
-                                                </div>
-                                                <small className="text-muted d-block mt-2">{metric.detail}</small>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </section>
-                            </div>
-
-                            <div className="col-lg-7">
-                                <section className="rt-card h-100">
-                                    <div className="p-4 rt-card-body">
-                                        <h2 className="rt-card-title mb-3"><i className="bi bi-tags"></i>Job keywords</h2>
-                                        <div className="rt-tabs mb-3" role="tablist">
-                                            {[
-                                                ['added', 'Added', result.added_keywords.length],
-                                                ['kept', 'Already had', keptKeywords.length],
-                                                ['missing', 'Missing', result.tailored_score.missing.length],
-                                            ].map(([key, label, count]) => (
-                                                <button key={key} type="button" role="tab" aria-selected={keywordTab === key} className={`rt-tab ${keywordTab === key ? 'is-active' : ''}`} onClick={() => setKeywordTab(key)}>
-                                                    {label}<span className="rt-count">{count}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-
-                                        {keywordTab === 'added' && (
-                                            result.added_keywords.length === 0 ? (
-                                                <p className="text-muted mb-0">No new keywords could be added from your CV. Check the Missing tab to confirm skills you have.</p>
-                                            ) : (
-                                                <>
-                                                    <p className="text-muted small">Keywords the tailored resume now contains that your original CV didn't.</p>
-                                                    {unverifiedCount > 0 && (
-                                                        <div className="alert alert-warning d-flex gap-2 align-items-start py-2 small">
-                                                            <i className="bi bi-exclamation-triangle mt-1"></i>
-                                                            <span>
-                                                                <strong>{unverifiedCount} keyword{unverifiedCount > 1 ? 's were' : ' was'} worded in without a direct quote from your CV.</strong>{' '}
-                                                                Check the preview and make sure each one is true for you before you apply.
-                                                            </span>
-                                                        </div>
-                                                    )}
-                                                    <div className="d-grid gap-2">
-                                                        {result.added_keywords.map((keyword) => (
-                                                            <div key={keyword.term}>
-                                                                <Chip keyword={keyword} tone={keyword.evidence ? 'success' : 'warning'} title={keyword.evidence ? undefined : 'No direct CV evidence: verify before applying'} />
-                                                                {keyword.evidence
-                                                                    ? <div className="rt-evidence mt-1">From your CV: "{keyword.evidence}"</div>
-                                                                    : <div className="rt-evidence rt-evidence-warning mt-1">No direct CV evidence. Verify this is true for you</div>}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </>
-                                            )
-                                        )}
-
-                                        {keywordTab === 'kept' && (
-                                            <div className="d-flex flex-wrap gap-2">
-                                                {keptKeywords.length === 0
-                                                    ? <p className="text-muted mb-0">Your original CV didn't contain any of the job keywords.</p>
-                                                    : keptKeywords.map((keyword) => <Chip key={keyword.term} keyword={keyword} tone="info" />)}
-                                            </div>
-                                        )}
-
-                                        {keywordTab === 'missing' && (
-                                            result.tailored_score.missing.length === 0 ? (
-                                                <p className="text-success mb-0"><i className="bi bi-trophy me-1"></i>Every job keyword is covered.</p>
-                                            ) : (
-                                                <>
-                                                    <p className="text-muted small mb-3">
-                                                        Not added because your CV doesn't show them. <strong>Tap the ones you genuinely have</strong> and we'll
-                                                        weave them into your resume.
-                                                    </p>
-                                                    <div className="d-flex flex-wrap gap-2 mb-3">
-                                                        {result.tailored_score.missing.map((keyword) => {
-                                                            const isSelected = selectedSkills.includes(keyword.term);
-                                                            return (
-                                                                <button key={keyword.term} type="button" className={`rt-chip rt-chip-danger ${keyword.importance === 'required' ? 'rt-chip-required' : ''} ${isSelected ? 'is-selected' : ''}`} onClick={() => toggleSkill(keyword.term)} aria-pressed={isSelected}>
-                                                                    <i className={`bi ${isSelected ? 'bi-check-lg' : 'bi-plus'}`}></i>{keyword.term}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </>
-                                            )
-                                        )}
-
-                                        {(keywordTab === 'missing' || selectedSkills.length > 0) && (
-                                            <div className="border-top pt-3 mt-3">
-                                                <form className="input-group mb-2" onSubmit={addCustomSkill}>
-                                                    <input type="text" className="form-control rt-input" placeholder="Add another skill you have (e.g. Docker)" value={customSkill} maxLength={60} onChange={(event) => setCustomSkill(event.target.value)} />
-                                                    <button className="btn rt-btn-soft" type="submit" disabled={!customSkill.trim()}><i className="bi bi-plus-lg"></i></button>
-                                                </form>
-                                                {selectedSkills.filter((skill) => !result.tailored_score.missing.some((keyword) => keyword.term === skill)).length > 0 && (
-                                                    <div className="d-flex flex-wrap gap-2 mb-2">
-                                                        {selectedSkills.filter((skill) => !result.tailored_score.missing.some((keyword) => keyword.term === skill)).map((skill) => (
-                                                            <button key={skill} type="button" className="rt-chip rt-chip-info is-selected" onClick={() => toggleSkill(skill)}>
-                                                                {skill}<i className="bi bi-x"></i>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                {refineError && <div className="alert alert-danger py-2 small">{refineError}</div>}
-                                                <button type="button" className="btn rt-btn-primary w-100" disabled={selectedSkills.length === 0 || isRefining} onClick={handleRefine}>
-                                                    {isRefining ? (
-                                                        <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Updating your resume...</>
-                                                    ) : (
-                                                        <><i className="bi bi-arrow-repeat me-2"></i>Update resume{selectedSkills.length > 0 ? ` with ${selectedSkills.length} skill${selectedSkills.length > 1 ? 's' : ''}` : ''}</>
-                                                    )}
-                                                </button>
-                                                {result.confirmed_skills?.length > 0 && (
-                                                    <small className="text-muted d-block mt-2">Already confirmed: {result.confirmed_skills.join(', ')}</small>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                </section>
-                            </div>
-                        </div>
-
-                        {result.changes?.length > 0 && (
-                            <section className="rt-card">
-                                <div className="p-4 rt-card-body">
-                                    <h2 className="rt-card-title mb-3"><i className="bi bi-pencil-square"></i>What we changed</h2>
-                                    <ul className="rt-changes row row-cols-1 row-cols-md-2 g-0">
-                                        {result.changes.map((change, index) => (
-                                            <li key={index} className="pe-md-3"><i className="bi bi-check2-circle"></i><span>{change}</span></li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </section>
-                        )}
-
-                        <section className="rt-card">
-                            <div className="p-4 rt-card-body">
-                                <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-3 mb-3">
-                                    <h2 className="rt-card-title"><i className="bi bi-eye"></i>Preview</h2>
-                                    <div className="rt-tabs" role="tablist">
-                                        {[['formatted', 'Formatted'], ['plain', 'ATS plain text']].map(([key, label]) => (
-                                            <button key={key} type="button" role="tab" aria-selected={previewTab === key} className={`rt-tab ${previewTab === key ? 'is-active' : ''}`} onClick={() => setPreviewTab(key)}>{label}</button>
-                                        ))}
-                                    </div>
-                                </div>
-                                {templates.length > 0 && (
-                                    <div className="mb-3">
-                                        <div className="d-flex align-items-center gap-2 mb-2">
-                                            <span className="fw-semibold small">Design</span>
-                                            {isSwitchingTemplate && <span className="spinner-border spinner-border-sm text-secondary" aria-label="Applying design"></span>}
-                                            <small className="text-muted ms-auto d-none d-sm-inline">Changing the design keeps your text and ATS score the same.</small>
-                                        </div>
-                                        <TemplatePicker templates={templates} value={result.template} onChange={changeTemplate} disabled={isSwitchingTemplate} label="Resume design" />
-                                        {templateError && <div className="text-danger small mt-2" role="alert">{templateError}</div>}
-                                    </div>
-                                )}
-                                {previewTab === 'formatted'
-                                    ? <iframe title="Tailored resume preview" srcDoc={result.html} className="rt-preview-frame"></iframe>
-                                    : <pre className="rt-plain">{result.plain_text}</pre>}
-                                {previewTab === 'plain' && <small className="text-muted d-block mt-2">This is exactly what an ATS parser reads from your PDF. Paste it into application forms that ask for plain text.</small>}
-                            </div>
-                        </section>
+                {scan && !isProcessing && (
+                    <div ref={scanRef} style={{ scrollMarginTop: '5rem' }}>
+                        <ScanReport scan={scan} isProcessing={isProcessing} onTailor={() => handleSubmit()} />
                     </div>
                 )}
 
-                {!result && !isProcessing && (
+                {!scan && !isProcessing && (
                     <section id="how-it-works" className="rt-overlap" style={{ scrollMarginTop: '5rem' }}>
                         <div className="row g-3 g-lg-4">
                             {[
@@ -770,14 +400,7 @@ export default function ResumeTailor({ seo, prefill = null, templates = [], maxJ
                 )}
             </div>
 
-            <footer className="rt-footer mt-auto py-4">
-                <div className="container d-flex flex-column flex-sm-row justify-content-between gap-2 text-center text-sm-start">
-                    <span>&copy; {new Date().getFullYear()} ResumeTailor AI</span>
-                    <span>Your CV text is processed by Groq AI to generate your tailored resume.</span>
-                </div>
-            </footer>
 
-            {toast && <div className="rt-toast" role="status"><i className="bi bi-check-circle-fill text-success"></i>{toast}</div>}
         </MainLayout>
     );
 }

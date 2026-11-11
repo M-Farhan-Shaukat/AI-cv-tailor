@@ -32,6 +32,18 @@ class AtsScorer
     public const SKILLS_ONLY_CREDIT = 0.85;
 
     /**
+     * A check scoring at least this passes; at least WARN_THRESHOLD is a warning; below that it fails.
+     */
+    public const PASS_THRESHOLD = 80;
+
+    public const WARN_THRESHOLD = 50;
+
+    /**
+     * How many keyword names a tip lists before it stops, to keep it readable.
+     */
+    protected const TIP_KEYWORD_LIMIT = 5;
+
+    /**
      * A resume that only lists a keyword cannot be a perfect match, even if every keyword is present.
      */
     public const SKILLS_ONLY_MAX_SCORE = 95;
@@ -111,7 +123,7 @@ class AtsScorer
      * @param  array<int, array{term: string, aliases?: array<int, string>, category?: string, importance?: string}>  $keywords
      * @return array{
      *     score: int,
-     *     breakdown: array<string, array{score: int, weight: int, label: string, detail: string}>,
+     *     breakdown: array<string, array{score: int, weight: int, label: string, detail: string, status: string, tip: string|null, gain: int}>,
      *     matched: array<int, array{term: string, category: string, importance: string, in_context: bool}>,
      *     missing: array<int, array{term: string, category: string, importance: string}>,
      *     skills_only: int,
@@ -174,9 +186,27 @@ class AtsScorer
             ],
         ];
 
+        $missingSections = array_diff(self::REQUIRED_SECTIONS, $foundSections);
+        $tips = [
+            'keywords' => $this->keywordTip($keywordReport['missing'], $keywordReport['skills_only_terms']),
+            'job_title' => $titleScore < 100 ? 'Use the exact job title "'.$jobTitle.'" in your headline or summary.' : null,
+            'sections' => $missingSections !== []
+                ? 'Add a clear heading for: '.implode(', ', array_map('ucfirst', $missingSections)).'.'
+                : null,
+            'contact' => match (true) {
+                ! $hasEmail && ! $hasPhone => 'Add your email address and phone number as plain text at the top.',
+                ! $hasPhone => 'Add a phone number as plain text at the top.',
+                ! $hasEmail => 'Add an email address as plain text at the top.',
+                default => null,
+            },
+        ];
+
         $overall = 0;
         foreach ($breakdown as $key => &$component) {
             $component['weight'] = self::COMPONENT_WEIGHTS[$key];
+            $component['status'] = $this->status($component['score']);
+            $component['tip'] = $tips[$key];
+            $component['gain'] = (int) round((100 - $component['score']) * self::COMPONENT_WEIGHTS[$key] / 100);
             $overall += $component['score'] * self::COMPONENT_WEIGHTS[$key] / 100;
         }
         unset($component);
@@ -194,6 +224,60 @@ class AtsScorer
             'required_total' => $keywordReport['required_total'],
             'required_matched' => $keywordReport['required_matched'],
         ];
+    }
+
+    /**
+     * "pass", "warn" or "fail" for a 0-100 check score.
+     */
+    public function status(int $score): string
+    {
+        return match (true) {
+            $score >= self::PASS_THRESHOLD => 'pass',
+            $score >= self::WARN_THRESHOLD => 'warn',
+            default => 'fail',
+        };
+    }
+
+    /**
+     * What to change to raise the keyword score: required keywords first, then keywords that appear
+     * only in the skills list. Worded as a condition, because only keywords the candidate really has belong in the CV.
+     *
+     * $hiddenMissing counts missing keywords left out of $missing because the viewer may not see them;
+     * the tip says how many more there are without naming them.
+     *
+     * @param  array<int, array{term: string, importance?: string}>  $missing
+     * @param  array<int, string>  $skillsOnlyTerms
+     */
+    public function keywordTip(array $missing, array $skillsOnlyTerms, int $hiddenMissing = 0): ?string
+    {
+        $missing = collect($missing);
+        $missingRequired = $missing->where('importance', 'required')->pluck('term');
+        $tips = [];
+
+        if ($missingRequired->isNotEmpty()) {
+            $tips[] = 'Add these required keywords if you have the experience: '.$this->termList($missingRequired->all(), $hiddenMissing).'.';
+        } elseif ($missing->isNotEmpty()) {
+            $tips[] = 'Add these keywords if they apply to you: '.$this->termList($missing->pluck('term')->all(), $hiddenMissing).'.';
+        } elseif ($hiddenMissing > 0) {
+            $tips[] = $hiddenMissing.' job keywords are missing from your CV.';
+        }
+
+        if ($skillsOnlyTerms !== []) {
+            $tips[] = 'Show '.$this->termList($skillsOnlyTerms).' in an experience or project bullet, not only in your skills list.';
+        }
+
+        return $tips === [] ? null : implode(' ', $tips);
+    }
+
+    /**
+     * @param  array<int, string>  $terms
+     */
+    protected function termList(array $terms, int $alsoHidden = 0): string
+    {
+        $shown = array_slice($terms, 0, self::TIP_KEYWORD_LIMIT);
+        $more = count($terms) - count($shown) + $alsoHidden;
+
+        return implode(', ', $shown).($more > 0 ? ' and '.$more.' more' : '');
     }
 
     /**

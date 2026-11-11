@@ -7,6 +7,7 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Sleep;
 use RuntimeException;
 
 class GroqService
@@ -32,7 +33,16 @@ class GroqService
 
     protected const MAX_REWRITE_CV_CHARACTERS = 7500;
 
-    protected ?string $apiKey;
+    /**
+     * Shown when every key is paused or rejected. It never mentions rate limits or keys: from the user's
+     * side the service is simply busy for a moment.
+     */
+    public const BUSY_MESSAGE = 'Our AI service is busy right now. Please try again in a minute.';
+
+    /**
+     * Responses that say "this key cannot be used right now": rate limited, invalid or forbidden.
+     */
+    protected const KEY_FAILURE_STATUSES = [401, 403, 429];
 
     protected string $model;
 
@@ -40,12 +50,32 @@ class GroqService
 
     protected string $reasoningEffort;
 
-    public function __construct(protected LlmUsageTracker $usage, protected JobDescriptionCondenser $condenser)
+    public function __construct(protected LlmUsageTracker $usage, protected JobDescriptionCondenser $condenser, protected GroqKeyPool $keys)
     {
-        $this->apiKey = config('services.groq.key');
         $this->model = config('services.groq.model') ?: 'openai/gpt-oss-120b';
         $this->apiUrl = config('services.groq.url') ?: 'https://api.groq.com/openai/v1/chat/completions';
         $this->reasoningEffort = config('services.groq.reasoning_effort') ?: 'medium';
+    }
+
+    /**
+     * Ask Groq whether a key works, using the free model list (no tokens used). True when Groq accepts
+     * the key, false when it rejects it, null when Groq could not be reached.
+     */
+    public function verifyKey(string $key): ?bool
+    {
+        $modelsUrl = preg_replace('#/chat/completions/?$#', '/models', $this->apiUrl) ?: $this->apiUrl;
+
+        try {
+            $response = Http::withToken($key)->acceptJson()->connectTimeout(10)->timeout(15)->get($modelsUrl);
+        } catch (ConnectionException) {
+            return null;
+        }
+
+        return match (true) {
+            $response->successful() => true,
+            in_array($response->status(), [401, 403], true) => false,
+            default => null,
+        };
     }
 
     /**
@@ -251,8 +281,10 @@ class GroqService
      */
     protected function chatJson(string $systemPrompt, string $userPrompt, int $maxTokens, ?callable $shrink = null, string $scope = 'llm', ?string $reasoningEffort = null): array
     {
-        if (empty($this->apiKey)) {
-            throw new RuntimeException('GROQ_API_KEY is missing. Please set it in your .env file.');
+        if ($this->keys->isEmpty()) {
+            Log::critical('No Groq API key is configured. Set GROQ_API_KEY or GROQ_API_KEYS in .env.');
+
+            throw new RuntimeException(self::BUSY_MESSAGE);
         }
 
         $this->usage->ensureBudget();
@@ -277,32 +309,7 @@ class GroqService
             }
 
             $startedAt = microtime(true);
-
-            try {
-                $response = Http::withToken($this->apiKey)
-                    ->acceptJson()
-                    ->connectTimeout(15)
-                    ->timeout(120)
-                    ->retry(3, function (int $attempt, \Throwable $exception) {
-                        $retryAfter = $exception instanceof RequestException
-                            ? (int) $exception->response->header('retry-after')
-                            : 0;
-
-                        return min(max($retryAfter, $attempt * 3), 60) * 1000;
-                    }, function (\Throwable $exception) {
-                        return $exception instanceof RequestException
-                            && (in_array($exception->response->status(), [429, 500, 502, 503], true)
-                                || $exception->response->json('error.code') === 'json_validate_failed');
-                    })
-                    ->post($this->apiUrl, $payload);
-            } catch (RequestException $exception) {
-                $response = $exception->response;
-            } catch (ConnectionException $exception) {
-                $this->usage->recordFailure($scope, null, $exception->getMessage(), $this->durationMs($startedAt));
-                Log::error('Groq connection error', ['message' => $exception->getMessage()]);
-
-                throw new RuntimeException('Could not reach the Groq API. Check your internet connection and try again.');
-            }
+            $response = $this->postWithKeyFailover($payload, $scope, $startedAt);
 
             if ($response->status() === 413 && $attempt < $attempts && $shrink !== null) {
                 Log::notice('Groq rejected the prompt size, retrying with a smaller prompt');
@@ -350,6 +357,100 @@ class GroqService
         return $decoded;
     }
 
+    /**
+     * Send the request with the next available key. A key that is rate limited (429) or rejected (401/403)
+     * is paused and the same request is sent with the next key, so the user never sees one key's limit.
+     * When every key is paused and the soonest comes back within a few seconds, wait for it once.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function postWithKeyFailover(array $payload, string $scope, float $startedAt): Response
+    {
+        $lastResponse = null;
+        $maxWait = (int) config('services.groq.key_failover_max_wait_seconds', 20);
+
+        for ($round = 1; $round <= 2; $round++) {
+            foreach ($this->keys->available() as $key) {
+                $response = $this->sendWithKey($key, $payload, $scope, $startedAt);
+
+                if (! in_array($response->status(), self::KEY_FAILURE_STATUSES, true)) {
+                    return $response;
+                }
+
+                $lastResponse = $response;
+                $this->pauseKey($key, $response);
+            }
+
+            $wait = $this->keys->secondsUntilNextKey();
+
+            if ($round === 2 || $wait === null || $wait > $maxWait) {
+                break;
+            }
+
+            Log::notice('Every Groq key is paused, waiting for the next one', ['seconds' => $wait]);
+            Sleep::for(max(1, $wait))->seconds();
+        }
+
+        if ($lastResponse !== null) {
+            return $lastResponse;
+        }
+
+        $this->usage->recordFailure($scope, 429, 'Every Groq API key is paused.', $this->durationMs($startedAt));
+        Log::error('Every Groq API key is paused', ['keys' => count($this->keys->keys())]);
+
+        throw new RuntimeException(self::BUSY_MESSAGE);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function sendWithKey(string $key, array $payload, string $scope, float $startedAt): Response
+    {
+        try {
+            return Http::withToken($key)
+                ->acceptJson()
+                ->connectTimeout(15)
+                ->timeout(120)
+                ->retry(3, fn (int $attempt): int => $attempt * 3000, function (\Throwable $exception): bool {
+                    return $exception instanceof RequestException
+                        && (in_array($exception->response->status(), [500, 502, 503], true)
+                            || $exception->response->json('error.code') === 'json_validate_failed');
+                })
+                ->post($this->apiUrl, $payload);
+        } catch (RequestException $exception) {
+            return $exception->response;
+        } catch (ConnectionException $exception) {
+            $this->usage->recordFailure($scope, null, $exception->getMessage(), $this->durationMs($startedAt));
+            Log::error('Groq connection error', ['message' => $exception->getMessage()]);
+
+            throw new RuntimeException('Could not reach the AI service. Check your internet connection and try again.');
+        }
+    }
+
+    /**
+     * Pause a key that hit its rate limit (for as long as Groq asks) or that Groq rejected.
+     */
+    protected function pauseKey(string $key, Response $response): void
+    {
+        if ($response->status() === 429) {
+            $retryAfter = (int) $response->header('retry-after');
+            $seconds = $retryAfter > 0 ? $retryAfter : (int) config('services.groq.key_rate_limit_cooldown_seconds', 60);
+
+            Log::warning('Groq key rate limited, switching to the next key', ['key' => $this->keys->label($key), 'paused_seconds' => $seconds]);
+        } else {
+            $seconds = (int) config('services.groq.key_rejected_cooldown_seconds', 3600);
+
+            Log::error('Groq rejected an API key, switching to the next key', [
+                'key' => $this->keys->label($key),
+                'status' => $response->status(),
+                'paused_seconds' => $seconds,
+                'error' => $response->json('error.message'),
+            ]);
+        }
+
+        $this->keys->pause($key, $seconds);
+    }
+
     protected function durationMs(float $startedAt): int
     {
         return (int) round((microtime(true) - $startedAt) * 1000);
@@ -358,9 +459,8 @@ class GroqService
     protected function friendlyError(Response $response): string
     {
         return match (true) {
-            $response->status() === 401 => 'Groq rejected the API key. Check GROQ_API_KEY in your .env file.',
-            $response->status() === 413 => 'The request is still too large for Groq\'s free-tier token limit. Please shorten the job description and try again.',
-            $response->status() === 429 => 'Groq rate limit reached. Please wait a minute and try again.',
+            in_array($response->status(), self::KEY_FAILURE_STATUSES, true) => self::BUSY_MESSAGE,
+            $response->status() === 413 => 'The job description is too long to process. Please shorten it and try again.',
             $response->json('error.code') === 'json_validate_failed' => 'The AI could not produce a valid resume for this CV and job description. Please try again, or shorten the job description.',
             default => 'AI request failed ('.$response->status().'): '.($response->json('error.message') ?? 'unknown error'),
         };

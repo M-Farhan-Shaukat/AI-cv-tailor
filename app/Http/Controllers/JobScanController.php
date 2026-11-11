@@ -10,6 +10,7 @@ use App\Services\JobMatcher;
 use App\Services\JobPostingPresenter;
 use App\Services\JobScanStatus;
 use App\Services\JobSearchFilters;
+use App\Services\KeywordVisibility;
 use App\Services\ResumeTextExtractor;
 use App\Services\UserResumeStore;
 use Illuminate\Database\Eloquent\Builder;
@@ -174,7 +175,7 @@ class JobScanController extends Controller
         return back();
     }
 
-    public function show(Request $request, JobPosting $jobPosting): InertiaResponse
+    public function show(Request $request, JobPosting $jobPosting, KeywordVisibility $visibility): InertiaResponse
     {
         $matcherKey = $this->matcherKey($request);
 
@@ -194,7 +195,7 @@ class JobScanController extends Controller
 
         return Inertia::render('Jobs/Show', [
             'job' => $this->presenter->details($jobPosting, $match, $savedJob),
-            'match' => $match ? $this->presenter->match($match) : null,
+            'match' => $match ? $visibility->forViewer($this->presenter->match($match), $request) : null,
             'tailorUrl' => route('home', ['job' => $jobPosting->id]),
             'backUrl' => route('jobs.index'),
             'seo' => [

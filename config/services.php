@@ -37,6 +37,10 @@ return [
 
     'groq' => [
         'key' => env('GROQ_API_KEY'),
+        'keys' => array_values(array_filter(array_map('trim', explode(',', (string) env('GROQ_API_KEYS', ''))))),
+        'key_rate_limit_cooldown_seconds' => (int) env('GROQ_KEY_RATE_LIMIT_COOLDOWN', 60),
+        'key_rejected_cooldown_seconds' => (int) env('GROQ_KEY_REJECTED_COOLDOWN', 3600),
+        'key_failover_max_wait_seconds' => (int) env('GROQ_KEY_FAILOVER_MAX_WAIT', 20),
         'model' => env('GROQ_MODEL', 'openai/gpt-oss-120b'),
         'url' => env('GROQ_API_URL', 'https://api.groq.com/openai/v1/chat/completions'),
         'reasoning_effort' => env('GROQ_REASONING_EFFORT', 'medium'),

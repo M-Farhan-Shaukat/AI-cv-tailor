@@ -21,6 +21,47 @@ class AtsScorerTest extends TestCase
         $this->assertSame(1, $report['required_total']);
     }
 
+    public function test_each_check_reports_a_status_a_fix_and_the_points_the_fix_is_worth(): void
+    {
+        $cv = "Jane Doe\njane@example.com\nSummary\nBuilt services in Laravel.\nSkills\nDocker\nExperience\nDeveloper at Acme";
+
+        $report = (new AtsScorer)->score($cv, [
+            ['term' => 'Laravel', 'importance' => 'required'],
+            ['term' => 'Kubernetes', 'importance' => 'required'],
+            ['term' => 'Docker', 'importance' => 'preferred'],
+        ], 'Backend Engineer');
+
+        $breakdown = $report['breakdown'];
+
+        $this->assertSame('warn', $breakdown['keywords']['status']);
+        $this->assertSame(
+            'Add these required keywords if you have the experience: Kubernetes. Show Docker in an experience or project bullet, not only in your skills list.',
+            $breakdown['keywords']['tip'],
+        );
+        $this->assertSame((int) round((100 - $breakdown['keywords']['score']) * 70 / 100), $breakdown['keywords']['gain']);
+
+        $this->assertSame('fail', $breakdown['job_title']['status']);
+        $this->assertSame('Use the exact job title "Backend Engineer" in your headline or summary.', $breakdown['job_title']['tip']);
+        $this->assertSame(10, $breakdown['job_title']['gain']);
+
+        $this->assertSame('Add a clear heading for: Education.', $breakdown['sections']['tip']);
+        $this->assertSame('Add a phone number as plain text at the top.', $breakdown['contact']['tip']);
+        $this->assertSame(5, $breakdown['contact']['gain']);
+    }
+
+    public function test_a_passing_check_has_no_tip_and_no_gain(): void
+    {
+        $cv = "Jane Doe\njane@example.com\n+44 20 7946 0958\nSummary\nLaravel Developer\nExperience\nBuilt Laravel apps\nSkills\nLaravel\nEducation\nBSc";
+
+        $breakdown = (new AtsScorer)->score($cv, [['term' => 'Laravel', 'importance' => 'required']], 'Laravel Developer')['breakdown'];
+
+        foreach ($breakdown as $check) {
+            $this->assertSame('pass', $check['status']);
+            $this->assertNull($check['tip']);
+            $this->assertSame(0, $check['gain']);
+        }
+    }
+
     public function test_matching_respects_word_boundaries_and_special_characters(): void
     {
         $report = (new AtsScorer)->scoreKeywords('Skills: Node.js, C++, CI/CD pipelines, JavaScript', [

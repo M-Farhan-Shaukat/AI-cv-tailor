@@ -10,7 +10,24 @@ class ResumeTailor
 {
     public const CORE_COMPETENCIES = 'Core Competencies';
 
-    public function __construct(public GroqService $groq, public AtsScorer $scorer) {}
+    public function __construct(public GroqService $groq, public AtsScorer $scorer, public JobKeywordAnalyzer $analyzer) {}
+
+    /**
+     * Score a CV against a job description without rewriting it: one cached keyword extraction,
+     * then the deterministic scorer. Gives the same score as the "before" score of tailoring.
+     *
+     * @return array{job_title: string, keywords: array<int, array<string, mixed>>, report: array<string, mixed>}
+     */
+    public function scan(string $cvText, string $jobDescription): array
+    {
+        $analysis = $this->analyzer->analyzeText($jobDescription);
+
+        return [
+            'job_title' => $analysis['job_title'],
+            'keywords' => $analysis['keywords'],
+            'report' => $this->scorer->score($cvText, $analysis['keywords'], $analysis['job_title']),
+        ];
+    }
 
     /**
      * @param  array{job_title: string, keywords: array<int, array<string, mixed>>}|null  $jobAnalysis  Reuse a previous analysis of the same JD.
@@ -31,7 +48,7 @@ class ResumeTailor
     public function tailor(string $cvText, string $jobDescription, ?array $jobAnalysis = null, array $confirmedSkills = [], array $design = []): array
     {
         $design = ResumeDesign::normalize($design);
-        $jobAnalysis ??= $this->groq->extractJobKeywords($jobDescription);
+        $jobAnalysis ??= $this->analyzer->analyzeText($jobDescription);
         $jobTitle = $jobAnalysis['job_title'];
         $keywords = $jobAnalysis['keywords'];
 

@@ -1,6 +1,7 @@
 import { Link, router, usePage } from '@inertiajs/react';
 import React from 'react';
 import NavBar from '../../Components/NavBar';
+import { HiddenKeywordsNotice } from '../../Components/TailorUi';
 import MainLayout from '../../Layouts/MainLayout';
 
 const BREAKDOWN_ORDER = ['keywords', 'job_title', 'sections', 'contact'];
@@ -108,6 +109,7 @@ function MatchPanel({ match, backUrl }) {
                                 </span>
                             ))}
                         </div>
+                        <HiddenKeywordsNotice count={match.missing_hidden ?? 0} />
                     </div>
                 )}
             </div>
@@ -167,6 +169,7 @@ export default function JobShow({ job, match, tailorUrl, backUrl, seo }) {
                             <a href={job.apply_url} target="_blank" rel="noopener noreferrer" className="btn btn-success rt-btn-success">
                                 <i className="bi bi-box-arrow-up-right me-2"></i>Apply on {job.source}
                             </a>
+                            <small className="text-muted text-center" style={{ maxWidth: '14rem' }}>Listing from {job.source}. Check the details on the original posting.</small>
                             <Link href={tailorUrl} className="btn rt-btn-primary">
                                 <i className="bi bi-magic me-2"></i>Tailor my resume
                             </Link>
@@ -191,12 +194,6 @@ export default function JobShow({ job, match, tailorUrl, backUrl, seo }) {
                 </div>
             </div>
 
-            <footer className="rt-footer mt-auto py-4">
-                <div className="container d-flex flex-column flex-sm-row justify-content-between gap-2 text-center text-sm-start">
-                    <span>&copy; {new Date().getFullYear()} ResumeTailor AI</span>
-                    <span>Job listing sourced from {job.source}. Always verify details on the original posting.</span>
-                </div>
-            </footer>
         </MainLayout>
     );
 }

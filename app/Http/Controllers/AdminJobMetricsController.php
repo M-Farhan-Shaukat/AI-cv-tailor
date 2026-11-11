@@ -6,15 +6,28 @@ use App\Models\JobPosting;
 use App\Models\JobSourceEvent;
 use App\Models\JobSourceStatus;
 use App\Models\LlmUsageEvent;
+use App\Services\JobFeedSync;
+use App\Services\JobSources\JobSourceManager;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class AdminJobMetricsController extends Controller
 {
-    public function index(Request $request): Response
+    public function index(Request $request, JobFeedSync $sync): Response
     {
+
         return Inertia::render('Admin/JobMetrics', [
+            'sync' => [
+                'settings' => $sync->settings(),
+                'last_run' => $sync->lastRun(),
+                'next_auto_sync_at' => $sync->nextAutoSyncAt(),
+                'scheduler_running' => $sync->schedulerIsRunning(),
+                'intervals' => JobFeedSync::INTERVALS,
+                'max_queries' => JobFeedSync::MAX_QUERIES,
+            ],
             'generatedAt' => now()->toIso8601String(),
             'providers' => $this->providers(),
             'sourceEvents' => $this->sourceEvents(),
@@ -56,11 +69,19 @@ class AdminJobMetricsController extends Controller
             ->sort()
             ->values();
 
-        return $names->map(function (string $name) use ($counts, $statuses): array {
+        $sources = app(JobSourceManager::class)->all();
+
+        return $names->map(function (string $name) use ($counts, $statuses, $sources): array {
             $status = $statuses->get($name);
 
             return [
                 'name' => $name,
+                'configured' => isset($sources[$name]) && $sources[$name]->isConfigured(),
+                'setup_hint' => match ($name) {
+                    'adzuna' => 'Set ADZUNA_APP_ID and ADZUNA_APP_KEY (free at developer.adzuna.com).',
+                    'jooble' => 'Set JOOBLE_API_KEY (free at jooble.org/api/about).',
+                    default => null,
+                },
                 'active_postings' => (int) ($counts[$name] ?? 0),
                 'last_attempt_at' => $status?->last_attempt_at?->toIso8601String(),
                 'last_success_at' => $status?->last_success_at?->toIso8601String(),
@@ -71,6 +92,62 @@ class AdminJobMetricsController extends Controller
                 'cooling_down_until' => $status?->disabled_until?->toIso8601String(),
             ];
         })->all();
+    }
+
+    /**
+     * Fetch postings now for every saved search term, from every provider or just one. Runs in the
+     * request, so it works without a queue worker and the admin sees the result straight away.
+     */
+    public function sync(Request $request, JobFeedSync $sync, JobSourceManager $sources): RedirectResponse
+    {
+        $validated = $request->validate([
+            'provider' => ['nullable', 'string', Rule::in(array_keys($sources->all()))],
+        ]);
+        $provider = $validated['provider'] ?? null;
+
+        if ($sync->settings()['queries'] === []) {
+            return back()->withErrors(['sync' => 'Add at least one search term in the sync settings first.']);
+        }
+
+        if ($provider !== null && ! $sources->all()[$provider]->isConfigured()) {
+            return back()->withErrors(['sync' => ucfirst($provider).' is not configured. Add its API keys to .env first.']);
+        }
+
+        set_time_limit(300);
+        $summary = $sync->run('manual', $provider);
+
+        $parts = collect($summary['providers'])
+            ->map(fn (array $row, string $name): string => ucfirst($name).': '.match ($row['status']) {
+                'ok' => "{$row['fetched']} fetched, {$row['created']} new",
+                'unconfigured' => 'not configured',
+                'cooling_down' => 'paused after repeated failures',
+                default => 'failed',
+            })
+            ->implode(' · ');
+
+        return back()->with('status', 'Sync finished. '.($parts !== '' ? $parts : 'No provider was available.'));
+    }
+
+    public function saveSyncSettings(Request $request, JobFeedSync $sync): RedirectResponse
+    {
+        $validated = $request->validate([
+            'queries' => ['present', 'array', 'max:'.JobFeedSync::MAX_QUERIES],
+            'queries.*' => ['nullable', 'string', 'max:100'],
+            'location' => ['nullable', 'string', 'max:100'],
+            'country' => ['nullable', 'string', 'size:2', 'alpha'],
+            'remote_only' => ['required', 'boolean'],
+            'per_page' => ['required', 'integer', 'min:10', 'max:100'],
+            'auto_sync' => ['required', 'boolean'],
+            'interval_hours' => ['required', 'integer', Rule::in(JobFeedSync::INTERVALS)],
+        ]);
+
+        if ($validated['auto_sync'] && array_filter(array_map('trim', $validated['queries'])) === []) {
+            return back()->withErrors(['queries' => 'Add at least one search term to turn on auto-sync.']);
+        }
+
+        $sync->saveSettings($validated);
+
+        return back()->with('status', 'Sync settings saved.');
     }
 
     /**

@@ -58,6 +58,14 @@ enum ResumeTemplate: string
         };
     }
 
+    /**
+     * Whether the template needs the Pro plan (see config/billing.php for the free ones).
+     */
+    public function isPremium(): bool
+    {
+        return ! in_array($this->value, (array) config('billing.free_templates', []), true);
+    }
+
     public function category(): string
     {
         return match ($this) {
@@ -187,7 +195,7 @@ enum ResumeTemplate: string
     }
 
     /**
-     * @return array<int, array{value: string, label: string, description: string, category: string, preview: array<string, mixed>|null}>
+     * @return array<int, array{value: string, label: string, description: string, category: string, premium: bool, preview: array<string, mixed>|null}>
      */
     public static function options(): array
     {
@@ -197,6 +205,7 @@ enum ResumeTemplate: string
                 'label' => $template->label(),
                 'description' => $template->description(),
                 'category' => $template->category(),
+                'premium' => $template->isPremium(),
                 'preview' => $template->preview(),
             ],
             self::cases(),

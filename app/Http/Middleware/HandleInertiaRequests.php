@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\AdSense;
+use App\Services\UsageQuota;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -46,7 +48,15 @@ class HandleInertiaRequests extends Middleware
                     'email' => $user->email,
                     'email_verified' => $user->hasVerifiedEmail(),
                     'is_admin' => $user->isAdmin(),
+                    'is_super_admin' => $user->isSuperAdmin(),
                 ] : null,
+            ],
+            'billing' => fn () => app(UsageQuota::class)->summary($request),
+            'ads' => fn () => app(AdSense::class)->forVisitor($request),
+            'site' => [
+                'name' => config('app.name'),
+                'url' => rtrim((string) config('app.url'), '/'),
+                'canonical' => $request->url(),
             ],
             'flash' => [
                 'status' => fn () => $request->session()->get('status'),

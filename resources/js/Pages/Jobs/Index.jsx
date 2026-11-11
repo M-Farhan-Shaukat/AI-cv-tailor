@@ -94,6 +94,53 @@ function StatusBanner({ status }) {
     return null;
 }
 
+
+const timeAgo = (value) => {
+    if (!value) {
+        return null;
+    }
+    const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
+    if (Number.isNaN(days)) {
+        return null;
+    }
+    if (days <= 0) {
+        return 'Today';
+    }
+    if (days === 1) {
+        return 'Yesterday';
+    }
+    if (days < 30) {
+        return `${days} days ago`;
+    }
+    return formatDate(value);
+};
+
+const AVATAR_TONES = ['indigo', 'violet', 'green', 'sky', 'amber', 'rose'];
+const avatarTone = (text = '') => AVATAR_TONES[[...text].reduce((sum, char) => sum + char.charCodeAt(0), 0) % AVATAR_TONES.length];
+
+/**
+ * A small circular gauge with the match score, or a dash when the job has not been scored.
+ */
+function MatchRing({ match }) {
+    const radius = 22;
+    const circumference = 2 * Math.PI * radius;
+    const tone = match ? scoreTone(match.score) : 'muted';
+    const colors = { success: 'var(--rt-success)', warning: 'var(--rt-warning)', danger: 'var(--rt-danger)', muted: '#cbd5e1' };
+
+    return (
+        <div className="rt-ring" aria-label={match ? `${match.score}% match` : 'Not scored'}>
+            <svg viewBox="0 0 52 52" aria-hidden="true">
+                <circle cx="26" cy="26" r={radius} fill="none" stroke="#eef2f7" strokeWidth="5" />
+                {match && (
+                    <circle cx="26" cy="26" r={radius} fill="none" stroke={colors[tone]} strokeWidth="5" strokeLinecap="round"
+                        strokeDasharray={circumference} strokeDashoffset={circumference * (1 - match.score / 100)} transform="rotate(-90 26 26)" />
+                )}
+            </svg>
+            <span className="rt-ring-value" style={{ color: match ? colors[tone] : 'var(--rt-muted)' }}>{match ? match.score : '—'}</span>
+        </div>
+    );
+}
+
 export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, canSaveSearch, defaultMinScore, seo }) {
     const user = usePage().props.auth?.user;
     const [search, setSearch] = useState(filters.search || '');
@@ -189,19 +236,41 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
         }
     };
 
-    const applyFilters = (event) => {
-        event.preventDefault();
-        router.get('/jobs', {
-            search,
-            location,
-            remote: remote ? 1 : 0,
-            employment_type: employmentType,
-            salary_min: salaryMin,
-            salary_max: salaryMax,
-            posted_within_days: postedWithin,
-            sort,
-        }, { preserveState: true, preserveScroll: true, replace: true });
+    const currentFilters = (overrides = {}) => ({
+        search,
+        location,
+        remote: remote ? 1 : 0,
+        employment_type: employmentType,
+        salary_min: salaryMin,
+        salary_max: salaryMax,
+        posted_within_days: postedWithin,
+        sort,
+        ...overrides,
+    });
+
+    const visit = (query) => {
+        const cleaned = Object.fromEntries(Object.entries(query).filter(([, value]) => value !== '' && value !== null && value !== 0 && value !== '0'));
+        router.get('/jobs', cleaned, { preserveState: true, preserveScroll: true, replace: true });
     };
+
+    const applyFilters = (event) => {
+        event?.preventDefault();
+        visit(currentFilters());
+    };
+
+    const changeSort = (value) => {
+        setSort(value);
+        visit(currentFilters({ sort: value }));
+    };
+
+    const activeFilters = [
+        filters.search && { key: 'search', label: `“${filters.search}”`, clear: () => { setSearch(''); visit(currentFilters({ search: '' })); } },
+        filters.location && { key: 'location', label: filters.location, icon: 'bi-geo-alt', clear: () => { setLocation(''); visit(currentFilters({ location: '' })); } },
+        filters.remote && { key: 'remote', label: 'Remote', icon: 'bi-house-door', clear: () => { setRemote(false); visit(currentFilters({ remote: 0 })); } },
+        filters.employment_type && { key: 'type', label: label(filters.employment_type), clear: () => { setEmploymentType(''); visit(currentFilters({ employment_type: '' })); } },
+        (filters.salary_min || filters.salary_max) && { key: 'salary', label: `Salary ${filters.salary_min || 0}–${filters.salary_max || 'any'}`, clear: () => { setSalaryMin(''); setSalaryMax(''); visit(currentFilters({ salary_min: '', salary_max: '' })); } },
+        filters.posted_within_days && { key: 'posted', label: `Last ${filters.posted_within_days} day${Number(filters.posted_within_days) === 1 ? '' : 's'}`, clear: () => { setPostedWithin(''); visit(currentFilters({ posted_within_days: '' })); } },
+    ].filter(Boolean);
 
     const saveSearch = (event) => {
         event.preventDefault();
@@ -239,31 +308,47 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
 
     return (
         <MainLayout seo={seo}>
-<NavBar />
+            <NavBar />
 
-            <div className="container py-4 py-lg-5">
-                <div className="row g-4">
-                    <div className="col-lg-4">
-                        <section className="rt-card p-4">
-                            <h1 className="h5 fw-bold mb-1"><i className="bi bi-briefcase me-2" style={{ color: 'var(--rt-primary)' }}></i>Scan jobs for your CV</h1>
-                            <p className="text-muted small mb-3">
-                                We score every posting with the same ATS engine as the resume tailor. Upload once, then see where you rank.
-                            </p>
+            <header className="rt-hero rt-hero-compact rt-jobs-hero">
+                <div className="container">
+                    <span className="rt-pill mb-3"><i className="bi bi-briefcase"></i>Live job listings</span>
+                    <h1 className="mb-2">Find jobs that match your CV</h1>
+                    <p className="rt-hero-lead mb-4">Search fresh listings, then score them against your CV with the same ATS engine as the resume tailor.</p>
+                    <form className="rt-job-search" onSubmit={applyFilters} role="search">
+                        <div className="rt-job-search-field">
+                            <i className="bi bi-search"></i>
+                            <input aria-label="Job title or keywords" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Job title, skill or company" />
+                        </div>
+                        <div className="rt-job-search-field">
+                            <i className="bi bi-geo-alt"></i>
+                            <input aria-label="Location" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="City, country or remote" />
+                        </div>
+                        <button type="submit" className="btn rt-btn-primary px-4">Search jobs</button>
+                    </form>
+                </div>
+            </header>
+
+            <div className="container pb-5">
+                <div className="row g-4 rt-overlap">
+                    <aside className="col-lg-4 col-xl-3 order-2 order-lg-1">
+                        <section id="your-cv" className="rt-card p-4 mb-3" style={{ scrollMarginTop: '5.5rem' }}>
+                            <h2 className="rt-card-title mb-1"><i className="bi bi-file-earmark-person"></i>Your CV</h2>
+                            <p className="text-muted small mb-3">Score the listings below against your CV to see where you rank.</p>
 
                             <form onSubmit={handleScan} noValidate>
-                                {hasCv && cvFilename && (
-                                    <div className="rt-file-chip mb-3">
-                                        <i className="bi bi-file-earmark-text"></i>
+                                {hasCv && cvFilename && !cvFile && (
+                                    <div className="rt-file-chip mb-2">
+                                        <i className="bi bi-file-earmark-check"></i>
                                         <div className="flex-grow-1 text-truncate">
-                                            <div className="fw-semibold text-truncate">{cvFilename}</div>
-                                            <small className="text-muted">Saved for this session</small>
+                                            <div className="fw-semibold text-truncate small">{cvFilename}</div>
+                                            <small className="text-muted">Ready to score</small>
                                         </div>
-                                        <i className="bi bi-check-circle-fill text-success"></i>
                                     </div>
                                 )}
 
                                 <label
-                                    className={`rt-dropzone mb-3 ${isDragging ? 'is-dragging' : ''}`}
+                                    className={`rt-dropzone rt-dropzone-compact mb-3 ${isDragging ? 'is-dragging' : ''}`}
                                     onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
                                     onDragLeave={() => setIsDragging(false)}
                                     onDrop={(event) => { event.preventDefault(); setIsDragging(false); selectFile(event.dataTransfer.files?.[0]); }}
@@ -274,9 +359,9 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
                                         accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                                         onChange={(event) => selectFile(event.target.files?.[0])}
                                     />
-                                    <i className="bi bi-cloud-arrow-up rt-dropzone-icon"></i>
-                                    <span className="fw-semibold">{cvFile ? cvFile.name : hasCv ? 'Upload a different CV' : 'Drop your CV here or browse'}</span>
-                                    <small className="text-muted">PDF or DOCX · up to 5MB</small>
+                                    <i className="bi bi-cloud-arrow-up"></i>
+                                    <span className="fw-semibold small text-truncate" style={{ maxWidth: '100%' }}>{cvFile ? cvFile.name : hasCv ? 'Use a different CV' : 'Upload your CV'}</span>
+                                    <small className="text-muted">PDF or DOCX · 5MB</small>
                                 </label>
 
                                 {error && (
@@ -287,198 +372,189 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
 
                                 <button className="btn rt-btn-primary w-100" type="submit" disabled={isWorking}>
                                     {isWorking ? (
-                                        <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Scanning...</>
+                                        <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Scoring...</>
                                     ) : (
                                         <><i className="bi bi-radar me-2"></i>Score my matches</>
                                     )}
                                 </button>
-                                <small className="text-muted d-block mt-2">
-                                    Uses your search and filters to choose which postings to score.
-                                </small>
                             </form>
                         </section>
 
-                        <section className="rt-card p-4 mt-3">
-                            <h2 className="h6 fw-bold mb-3"><i className="bi bi-funnel me-2"></i>Filters</h2>
+                        <section className="rt-card p-4 mb-3">
+                            <div className="d-flex justify-content-between align-items-center mb-3">
+                                <h2 className="rt-card-title"><i className="bi bi-sliders"></i>Filters</h2>
+                                <Link href="/jobs" className="small">Reset</Link>
+                            </div>
                             <form onSubmit={applyFilters} className="d-grid gap-3">
-                                <div>
-                                    <label className="rt-filter-label d-block mb-1" htmlFor="job-search">Keywords</label>
-                                    <input id="job-search" className="form-control rt-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Laravel, backend, designer..." />
+                                <div className="form-check form-switch">
+                                    <input id="job-remote" className="form-check-input" type="checkbox" role="switch" checked={remote} onChange={(event) => setRemote(event.target.checked)} />
+                                    <label className="form-check-label small fw-semibold" htmlFor="job-remote">Remote only</label>
                                 </div>
                                 <div>
-                                    <label className="rt-filter-label d-block mb-1" htmlFor="job-location">Location</label>
-                                    <input id="job-location" className="form-control rt-input" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="City, country or remote" />
-                                </div>
-                                <div className="form-check">
-                                    <input id="job-remote" className="form-check-input" type="checkbox" checked={remote} onChange={(event) => setRemote(event.target.checked)} />
-                                    <label className="form-check-label small" htmlFor="job-remote">Remote only</label>
-                                </div>
-                                <div>
-                                    <label className="rt-filter-label d-block mb-1" htmlFor="job-employment">Employment type</label>
-                                    <select id="job-employment" className="form-select rt-input" value={employmentType} onChange={(event) => setEmploymentType(event.target.value)}>
-                                        <option value="">Any type</option>
-                                        {EMPLOYMENT_TYPES.map((type) => <option key={type} value={type}>{label(type)}</option>)}
-                                    </select>
-                                </div>
-                                <div className="row g-2">
-                                    <div className="col-6">
-                                        <label className="rt-filter-label d-block mb-1" htmlFor="job-salary-min">Min salary</label>
-                                        <input id="job-salary-min" type="number" min="0" className="form-control rt-input" value={salaryMin} onChange={(event) => setSalaryMin(event.target.value)} placeholder="50000" />
-                                    </div>
-                                    <div className="col-6">
-                                        <label className="rt-filter-label d-block mb-1" htmlFor="job-salary-max">Max salary</label>
-                                        <input id="job-salary-max" type="number" min="0" className="form-control rt-input" value={salaryMax} onChange={(event) => setSalaryMax(event.target.value)} placeholder="120000" />
+                                    <div className="rt-filter-label mb-2">Employment type</div>
+                                    <div className="d-flex flex-wrap gap-1">
+                                        {['', ...EMPLOYMENT_TYPES].map((type) => (
+                                            <button key={type || 'any'} type="button" className={`rt-filter-pill ${employmentType === type ? 'is-active' : ''}`} onClick={() => setEmploymentType(type)}>
+                                                {type ? label(type) : 'Any'}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="rt-filter-label d-block mb-1" htmlFor="job-posted">Posted within</label>
-                                    <select id="job-posted" className="form-select rt-input" value={postedWithin} onChange={(event) => setPostedWithin(event.target.value)}>
+                                    <div className="rt-filter-label mb-2">Salary range</div>
+                                    <div className="d-flex align-items-center gap-2">
+                                        <input aria-label="Minimum salary" type="number" min="0" className="form-control form-control-sm rt-input" value={salaryMin} onChange={(event) => setSalaryMin(event.target.value)} placeholder="Min" />
+                                        <span className="text-muted">–</span>
+                                        <input aria-label="Maximum salary" type="number" min="0" className="form-control form-control-sm rt-input" value={salaryMax} onChange={(event) => setSalaryMax(event.target.value)} placeholder="Max" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="rt-filter-label d-block mb-2" htmlFor="job-posted">Date posted</label>
+                                    <select id="job-posted" className="form-select form-select-sm rt-input" value={postedWithin} onChange={(event) => setPostedWithin(event.target.value)}>
                                         <option value="">Any time</option>
                                         {POSTED_WITHIN.map((days) => <option key={days} value={days}>{days === 1 ? 'Last 24 hours' : `Last ${days} days`}</option>)}
                                     </select>
                                 </div>
-                                <div>
-                                    <label className="rt-filter-label d-block mb-1" htmlFor="job-sort">Sort by</label>
-                                    <select id="job-sort" className="form-select rt-input" value={sort} onChange={(event) => setSort(event.target.value)}>
-                                        <option value="newest">Newest</option>
-                                        <option value="match">Best match</option>
-                                        <option value="company">Company</option>
-                                    </select>
-                                </div>
-                                <div className="d-flex gap-2">
-                                    <button className="btn rt-btn-soft flex-grow-1" type="submit">Apply filters</button>
-                                    <Link href="/jobs" className="btn btn-outline-secondary">Reset</Link>
-                                </div>
+                                <button className="btn rt-btn-soft" type="submit"><i className="bi bi-funnel me-1"></i>Apply filters</button>
                             </form>
                         </section>
 
-                        {canSaveSearch && (
-                            <section className="rt-card p-4 mt-3">
-                                <h2 className="h6 fw-bold mb-3"><i className="bi bi-bell me-2"></i>Save this search</h2>
-                                <form onSubmit={saveSearch} className="d-grid gap-3">
-                                    <div>
-                                        <label className="rt-filter-label d-block mb-1" htmlFor="saved-search-name">Name</label>
-                                        <input id="saved-search-name" className="form-control rt-input" value={searchName} onChange={(event) => setSearchName(event.target.value)} placeholder="Remote Laravel roles" />
-                                    </div>
-                                    <div>
-                                        <label className="rt-filter-label d-block mb-1" htmlFor="saved-search-score">Minimum match</label>
-                                        <div className="input-group">
+                        {canSaveSearch ? (
+                            <section className="rt-card p-4">
+                                <h2 className="rt-card-title mb-1"><i className="bi bi-bell"></i>Job alerts</h2>
+                                <p className="text-muted small mb-3">Save this search and get an email when new jobs match your CV.</p>
+                                <form onSubmit={saveSearch} className="d-grid gap-2">
+                                    <input aria-label="Search name" className="form-control form-control-sm rt-input" value={searchName} onChange={(event) => setSearchName(event.target.value)} placeholder="e.g. Remote Laravel roles" />
+                                    <div className="d-flex align-items-center gap-2 small">
+                                        <label htmlFor="saved-search-score" className="text-muted text-nowrap">Min. match</label>
+                                        <div className="input-group input-group-sm">
                                             <input id="saved-search-score" type="number" min="0" max="100" className="form-control rt-input" value={saveMinScore} onChange={(event) => setSaveMinScore(event.target.value)} />
                                             <span className="input-group-text">%</span>
                                         </div>
                                     </div>
-                                    <div className="form-check">
+                                    <div className="form-check small">
                                         <input id="saved-search-alerts" className="form-check-input" type="checkbox" checked={saveAlerts} onChange={(event) => setSaveAlerts(event.target.checked)} />
-                                        <label className="form-check-label small" htmlFor="saved-search-alerts">Email me when new jobs match</label>
+                                        <label className="form-check-label" htmlFor="saved-search-alerts">Email me new matches</label>
                                     </div>
-                                    <button type="submit" className="btn rt-btn-soft" disabled={!searchName.trim()}>
-                                        <i className="bi bi-bookmark-plus me-2"></i>Save search
+                                    <button type="submit" className="btn btn-sm rt-btn-soft" disabled={!searchName.trim()}>
+                                        <i className="bi bi-bookmark-plus me-1"></i>Save search
                                     </button>
                                 </form>
                             </section>
+                        ) : (
+                            <section className="rt-card p-4 text-center">
+                                <i className="bi bi-bell fs-4" style={{ color: 'var(--rt-primary)' }}></i>
+                                <h2 className="h6 fw-bold mt-2 mb-1">Get job alerts</h2>
+                                <p className="text-muted small mb-3">Create a free account to save searches and get emailed new matches.</p>
+                                <Link href="/register" className="btn btn-sm rt-btn-primary px-3">Sign up free</Link>
+                            </section>
                         )}
-                    </div>
+                    </aside>
 
-                    <div className="col-lg-8">
-                        <div className="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+                    <div className="col-lg-8 col-xl-9 order-1 order-lg-2">
+                        <div className="rt-card rt-jobs-toolbar mb-3">
                             <div>
-                                <h2 className="h5 fw-bold mb-0">{jobs.total} job{jobs.total === 1 ? '' : 's'} found</h2>
-                                <p className="text-muted small mb-0">Scores are relative to your uploaded CV.</p>
+                                <span className="fw-bold">{jobs.total.toLocaleString()}</span> job{jobs.total === 1 ? '' : 's'}
+                                {!hasCv && <a href="#your-cv" className="small ms-2"><i className="bi bi-info-circle me-1"></i>Upload your CV to see match scores</a>}
                             </div>
-                            {!hasCv && <span className="badge text-bg-light border"><i className="bi bi-info-circle me-1"></i>Upload a CV to see scores</span>}
+                            <div className="d-flex align-items-center gap-2">
+                                <label htmlFor="job-sort" className="small text-muted text-nowrap">Sort by</label>
+                                <select id="job-sort" className="form-select form-select-sm" value={sort} onChange={(event) => changeSort(event.target.value)}>
+                                    <option value="newest">Newest</option>
+                                    <option value="match">Best match</option>
+                                    <option value="company">Company</option>
+                                </select>
+                            </div>
                         </div>
+
+                        {activeFilters.length > 0 && (
+                            <div className="d-flex flex-wrap gap-2 mb-3">
+                                {activeFilters.map((filter) => (
+                                    <button key={filter.key} type="button" className="rt-active-filter" onClick={filter.clear} title="Remove filter">
+                                        {filter.icon && <i className={`bi ${filter.icon}`}></i>}<span className="text-capitalize">{filter.label}</span><i className="bi bi-x"></i>
+                                    </button>
+                                ))}
+                                <Link href="/jobs" className="small align-self-center ms-1">Clear all</Link>
+                            </div>
+                        )}
 
                         <StatusBanner status={status} />
 
                         {jobs.data.length === 0 ? (
                             <section className="rt-card p-5 text-center">
-                                <i className="bi bi-search" style={{ fontSize: '2rem', color: 'var(--rt-muted)' }}></i>
-                                <h3 className="h6 fw-bold mt-3">No postings match these filters</h3>
-                                <p className="text-muted small mb-0">Try a broader keyword, clear the location, or refresh the feeds.</p>
+                                <span className="rt-stat-icon rt-tone-indigo mx-auto mb-3"><i className="bi bi-search"></i></span>
+                                <h3 className="h6 fw-bold">No jobs match these filters</h3>
+                                <p className="text-muted small mb-3">Try a broader keyword, clear the location, or remove a filter.</p>
+                                <Link href="/jobs" className="btn btn-sm btn-light border">Show all jobs</Link>
                             </section>
                         ) : (
                             <div className="d-grid gap-3">
-                                {jobs.data.map((job) => {
-                                    const tone = job.match ? scoreTone(job.match.score) : 'muted';
-                                    return (
-                                        <article key={job.id} className="rt-card rt-job-card p-3 p-sm-4">
-                                            <div className="d-flex gap-3 align-items-start">
-                                                <div className={`rt-job-score rt-job-score-${tone}`} aria-label={job.match ? `${job.match.score}% match` : 'Not scored'}>
-                                                    {job.match ? job.match.score : '—'}
-                                                    <small>{job.match ? 'match' : 'n/a'}</small>
-                                                </div>
-                                                <div className="flex-grow-1 min-w-0">
-                                                    <div className="d-flex flex-wrap justify-content-between gap-2">
-                                                        <h3 className="h6 fw-bold mb-1">
-                                                            <Link href={job.url} className="text-decoration-none" style={{ color: 'var(--rt-ink)' }}>{job.title}</Link>
-                                                        </h3>
-                                                        <span className="badge text-bg-light border text-uppercase">{job.source}</span>
-                                                    </div>
-                                                    <div className="rt-job-meta">
-                                                        {job.company && <span><i className="bi bi-building"></i>{job.company}</span>}
-                                                        {job.location && <span><i className="bi bi-geo-alt"></i>{job.location}</span>}
-                                                        {job.is_remote && <span><i className="bi bi-house-door"></i>Remote</span>}
-                                                        {formatDate(job.posted_at) && <span><i className="bi bi-clock"></i>{formatDate(job.posted_at)}</span>}
-                                                        {formatSalary(job) && <span><i className="bi bi-cash"></i>{formatSalary(job)}</span>}
-                                                    </div>
-                                                    <div className="d-flex flex-wrap align-items-center gap-2 mt-3">
-                                                        {job.match ? (
-                                                            <>
-                                                                <span className="rt-chip rt-chip-success">{job.match.matched_count} matched</span>
-                                                                <span className="rt-chip rt-chip-danger">{job.match.missing_count} missing</span>
-                                                                {job.match.required_total > 0 && (
-                                                                    <span className="text-muted small">
-                                                                        {job.match.required_matched}/{job.match.required_total} required
-                                                                    </span>
-                                                                )}
-                                                            </>
-                                                        ) : (
-                                                            <span className="text-muted small">Not scored for your CV yet</span>
-                                                        )}
-                                                        <div className="ms-auto d-flex align-items-center gap-2">
-                                                            <button
-                                                                type="button"
-                                                                className={`btn btn-sm ${job.saved ? 'btn-primary' : 'btn-outline-secondary'}`}
-                                                                onClick={() => toggleSaved(job)}
-                                                                title={job.saved ? 'Remove from saved jobs' : 'Save this job'}
-                                                            >
-                                                                <i className={`bi ${job.saved ? 'bi-bookmark-fill' : 'bi-bookmark'}`}></i>
-                                                                <span className="visually-hidden">{job.saved ? 'Unsave job' : 'Save job'}</span>
-                                                            </button>
-                                                            <Link href={job.url} className="btn btn-sm rt-btn-soft">
-                                                                View job <i className="bi bi-arrow-right ms-1"></i>
-                                                            </Link>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                {jobs.data.map((job) => (
+                                    <article key={job.id} className="rt-card rt-job-row">
+                                        <span className={`rt-company-avatar rt-tone-${avatarTone(job.company || job.title)}`} aria-hidden="true">
+                                            {(job.company || job.title || '?').trim().charAt(0).toUpperCase()}
+                                        </span>
+
+                                        <div className="flex-grow-1 min-w-0">
+                                            <h3 className="rt-job-title">
+                                                <Link href={job.url}>{job.title}</Link>
+                                            </h3>
+                                            <div className="rt-job-sub">
+                                                {job.company && <span className="fw-semibold">{job.company}</span>}
+                                                {job.location && <span><i className="bi bi-geo-alt"></i>{job.location}</span>}
                                             </div>
-                                        </article>
-                                    );
-                                })}
+                                            <div className="rt-job-tags">
+                                                {job.is_remote && <span className="rt-job-tag is-remote"><i className="bi bi-house-door"></i>Remote</span>}
+                                                {job.employment_type && <span className="rt-job-tag text-capitalize">{label(job.employment_type)}</span>}
+                                                {formatSalary(job) && <span className="rt-job-tag"><i className="bi bi-cash-stack"></i>{formatSalary(job)}</span>}
+                                                {timeAgo(job.posted_at) && <span className="rt-job-tag"><i className="bi bi-clock"></i>{timeAgo(job.posted_at)}</span>}
+                                                <span className="rt-job-tag text-uppercase">{job.source}</span>
+                                            </div>
+                                            {job.match && (
+                                                <div className="rt-job-match">
+                                                    <span className="text-success"><i className="bi bi-check-circle-fill"></i>{job.match.matched_count} matched</span>
+                                                    <span className="text-danger"><i className="bi bi-x-circle-fill"></i>{job.match.missing_count} missing</span>
+                                                    {job.match.required_total > 0 && <span className="text-muted">{job.match.required_matched}/{job.match.required_total} required</span>}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="rt-job-side">
+                                            {job.match ? <MatchRing match={job.match} /> : <span></span>}
+                                            <div className="d-flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    className={`btn btn-sm ${job.saved ? 'btn-primary' : 'btn-light border'}`}
+                                                    onClick={() => toggleSaved(job)}
+                                                    title={job.saved ? 'Remove from saved jobs' : 'Save this job'}
+                                                >
+                                                    <i className={`bi ${job.saved ? 'bi-bookmark-fill' : 'bi-bookmark'}`}></i>
+                                                    <span className="visually-hidden">{job.saved ? 'Unsave job' : 'Save job'}</span>
+                                                </button>
+                                                <Link href={job.url} className="btn btn-sm rt-btn-soft text-nowrap">
+                                                    View <i className="bi bi-arrow-right ms-1"></i>
+                                                </Link>
+                                            </div>
+                                        </div>
+                                    </article>
+                                ))}
                             </div>
                         )}
 
                         {jobs.last_page > 1 && (
                             <nav className="d-flex justify-content-between align-items-center mt-4" aria-label="Job pagination">
                                 {jobs.prev_page_url
-                                    ? <Link href={jobs.prev_page_url} className="btn btn-sm btn-outline-secondary"><i className="bi bi-arrow-left me-1"></i>Previous</Link>
+                                    ? <Link href={jobs.prev_page_url} className="btn btn-sm btn-light border" preserveScroll={false}><i className="bi bi-arrow-left me-1"></i>Previous</Link>
                                     : <span></span>}
                                 <span className="text-muted small">Page {jobs.current_page} of {jobs.last_page}</span>
                                 {jobs.next_page_url
-                                    ? <Link href={jobs.next_page_url} className="btn btn-sm btn-outline-secondary">Next<i className="bi bi-arrow-right ms-1"></i></Link>
+                                    ? <Link href={jobs.next_page_url} className="btn btn-sm btn-light border" preserveScroll={false}>Next<i className="bi bi-arrow-right ms-1"></i></Link>
                                     : <span></span>}
                             </nav>
                         )}
                     </div>
                 </div>
             </div>
-
-            <footer className="rt-footer mt-auto py-4">
-                <div className="container d-flex flex-column flex-sm-row justify-content-between gap-2 text-center text-sm-start">
-                    <span>&copy; {new Date().getFullYear()} ResumeTailor AI</span>
-                    <span>Match scores are generated by the same ATS engine used to tailor resumes.</span>
-                </div>
-            </footer>
         </MainLayout>
     );
 }

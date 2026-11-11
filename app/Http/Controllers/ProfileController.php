@@ -8,6 +8,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Redirect;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -21,6 +22,8 @@ class ProfileController extends Controller
         return Inertia::render('Profile/Edit', [
             'mustVerifyEmail' => $request->user() instanceof MustVerifyEmail,
             'status' => session('status'),
+            'hasBillingAccount' => $request->user()->hasStripeId(),
+            'subscriptionEndsAt' => $request->user()->subscription((string) config('billing.subscription_type', 'default'))?->ends_at?->toDateString(),
         ]);
     }
 
@@ -50,6 +53,13 @@ class ProfileController extends Controller
         ]);
 
         $user = $request->user();
+        $subscription = $user->subscription((string) config('billing.subscription_type', 'default'));
+
+        if ($subscription !== null && $subscription->valid() && ! $subscription->onGracePeriod()) {
+            throw ValidationException::withMessages([
+                'password' => 'Cancel your Pro subscription from the billing page before deleting your account, so you are not charged again.',
+            ]);
+        }
 
         Auth::logout();
 
