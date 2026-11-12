@@ -153,6 +153,35 @@ class SiteSettingsTest extends TestCase
             ->assertSessionHasErrors('email');
     }
 
+    public function test_the_ai_model_settings_show_their_defaults_locked_and_can_be_changed(): void
+    {
+        $superAdmin = User::factory()->superAdmin()->create();
+        config(['services.groq.model' => null, 'services.groq.url' => null, 'services.groq.reasoning_effort' => null]);
+
+        $this->actingAs($superAdmin)
+            ->get('/admin/settings?tab=ai')
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('groups.ai.fields.model.value', 'openai/gpt-oss-120b')
+                ->where('groups.ai.fields.model.default', 'openai/gpt-oss-120b')
+                ->where('groups.ai.fields.model.locked', true)
+                ->where('groups.ai.fields.api_url.value', 'https://api.groq.com/openai/v1/chat/completions')
+                ->where('groups.ai.fields.reasoning_effort.value', 'medium'));
+
+        config(['services.groq.model' => 'from-env-model']);
+        $this->actingAs($superAdmin)->put('/admin/settings/ai', [
+            'model' => 'llama-3.3-70b-versatile',
+            'api_url' => 'https://api.groq.com/openai/v1/chat/completions',
+            'reasoning_effort' => 'low',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame('llama-3.3-70b-versatile', $this->freshlyApplied('services.groq.model'));
+        $this->assertSame('low', $this->freshlyApplied('services.groq.reasoning_effort'));
+
+        $this->actingAs($superAdmin)
+            ->put('/admin/settings/ai', ['model' => 'bad model name!', 'api_url' => 'http://example.com/chat', 'reasoning_effort' => 'max'])
+            ->assertSessionHasErrors(['model', 'api_url', 'reasoning_effort']);
+    }
+
     public function test_the_test_email_uses_the_saved_settings(): void
     {
         config(['mail.default' => 'log']);

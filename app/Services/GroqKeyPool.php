@@ -20,6 +20,12 @@ class GroqKeyPool
     protected const PAUSE_CACHE_PREFIX = 'groq:key-paused:';
 
     /**
+     * Which Groq organisation a key belongs to, learned from rate-limit errors. Groq applies its
+     * tokens-per-minute limit per organisation, so keys from one account share a single limit.
+     */
+    protected const ORGANIZATION_CACHE_PREFIX = 'groq:key-org:';
+
+    /**
      * Every configured key, without blanks or duplicates, in configuration order. Both GROQ_API_KEY and
      * GROQ_API_KEYS accept a comma-separated list, so pasting several keys into either one works.
      *
@@ -87,7 +93,7 @@ class GroqKeyPool
     /**
      * Each key's label and how long it stays paused, for the admin panel. Never includes the keys.
      *
-     * @return array<int, array{position: int, label: string, source: string, id: int|null, name: string|null, paused_seconds: int}>
+     * @return array<int, array{position: int, label: string, source: string, id: int|null, name: string|null, organization: string|null, paused_seconds: int}>
      */
     public function statuses(): array
     {
@@ -98,6 +104,7 @@ class GroqKeyPool
                 'source' => $entry['source'],
                 'id' => $entry['model']?->id,
                 'name' => $entry['model']?->name,
+                'organization' => $this->organizationOf($entry['key']),
                 'paused_seconds' => ($until = $this->pausedUntil($entry['key'])) === null ? 0 : max(0, $until - now()->getTimestamp()),
             ])
             ->all();
@@ -110,6 +117,38 @@ class GroqKeyPool
     {
         return in_array($key, $this->keys(), true)
             || GroqApiKey::query()->where('fingerprint', GroqApiKey::fingerprintOf($key))->exists();
+    }
+
+    /**
+     * Remember the Groq organisation a key belongs to (it appears in Groq's rate-limit errors).
+     */
+    public function rememberOrganization(string $key, string $organization): void
+    {
+        Cache::forever(self::ORGANIZATION_CACHE_PREFIX.$this->fingerprint($key), $organization);
+    }
+
+    public function organizationOf(string $key): ?string
+    {
+        $organization = Cache::get(self::ORGANIZATION_CACHE_PREFIX.$this->fingerprint($key));
+
+        return is_string($organization) ? $organization : null;
+    }
+
+    /**
+     * The key plus every known key from the same Groq organisation: they share one rate limit, so
+     * when one is limited they all are.
+     *
+     * @return array<int, string>
+     */
+    public function keysSharingLimitWith(string $key): array
+    {
+        $organization = $this->organizationOf($key);
+
+        if ($organization === null) {
+            return [$key];
+        }
+
+        return array_values(array_unique([$key, ...array_filter($this->keys(), fn (string $other): bool => $this->organizationOf($other) === $organization)]));
     }
 
     /**
@@ -149,6 +188,11 @@ class GroqKeyPool
         $position = array_search($key, $this->keys(), true);
 
         return 'key #'.($position === false ? '?' : $position + 1).' (...'.substr($key, -4).')';
+    }
+
+    public function isPaused(string $key): bool
+    {
+        return $this->pausedUntil($key) !== null;
     }
 
     protected function pausedUntil(string $key): ?int

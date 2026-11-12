@@ -98,6 +98,16 @@ class SiteSettings
                 'mailer' => ['label' => 'Send email with', 'type' => 'select', 'options' => ['smtp' => 'SMTP server', 'log' => 'Log file only (testing)'], 'config' => 'mail.default', 'rules' => ['in:smtp,log'], 'show_when' => ['provider' => ['custom']]],
             ],
         ],
+        'ai' => [
+            'label' => 'AI model',
+            'icon' => 'bi-cpu',
+            'description' => 'Which Groq model rewrites and analyses CVs. The defaults work well; change them only if you know what you need. API keys are under AI keys.',
+            'fields' => [
+                'model' => ['label' => 'Model', 'type' => 'string', 'config' => 'services.groq.model', 'default' => 'openai/gpt-oss-120b', 'locked' => true, 'rules' => ['string', 'max:100', 'regex:/^[A-Za-z0-9._\/:-]+$/'], 'suggestions' => ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'meta-llama/llama-4-scout-17b-16e-instruct', 'qwen/qwen3-32b'], 'help' => 'Must support JSON output. Groq rate limits differ per model.'],
+                'api_url' => ['label' => 'API URL', 'type' => 'string', 'config' => 'services.groq.url', 'default' => 'https://api.groq.com/openai/v1/chat/completions', 'locked' => true, 'rules' => ['url:https', 'max:255', 'ends_with:/chat/completions'], 'help' => 'Groq\'s OpenAI-compatible chat completions endpoint.'],
+                'reasoning_effort' => ['label' => 'Reasoning effort', 'type' => 'select', 'config' => 'services.groq.reasoning_effort', 'default' => 'medium', 'locked' => true, 'options' => ['low' => 'Low (fastest, fewest tokens)', 'medium' => 'Medium (recommended)', 'high' => 'High (slowest, most tokens)'], 'rules' => ['in:low,medium,high'], 'help' => 'Used by gpt-oss models only. Higher effort uses more of the per-minute token limit.'],
+            ],
+        ],
         'jobs' => [
             'label' => 'Job providers',
             'icon' => 'bi-broadcast',
@@ -206,6 +216,9 @@ class SiteSettings
                     'options' => $meta['options'] ?? null,
                     'option_help' => $meta['option_help'] ?? null,
                     'show_when' => $meta['show_when'] ?? null,
+                    'default' => $meta['default'] ?? null,
+                    'locked' => $meta['locked'] ?? false,
+                    'suggestions' => $meta['suggestions'] ?? null,
                 ];
 
                 if ($meta['type'] === 'secret') {
@@ -217,7 +230,7 @@ class SiteSettings
 
                 $value = $meta['config'] === null
                     ? ($saved ?? $meta['default'] ?? ($field === 'email' ? config('mail.from.address') : ''))
-                    : config($meta['config']);
+                    : (config($meta['config']) ?: ($meta['default'] ?? null));
 
                 return [...$base, 'value' => $value ?? '', 'from_panel' => filled($saved) || $saved === false || $saved === 0];
             })->all(),

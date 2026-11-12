@@ -6,10 +6,12 @@ import AdminLayout from '../../Layouts/AdminLayout';
  * One field. Secrets are write-only: the current value is never sent to the browser, only a hint
  * such as "…a1b2". Leaving a secret empty keeps the saved one.
  */
-function Field({ name, field, form }) {
+function Field({ name, field, form, unlocked = false, onToggleLock }) {
     const error = form.errors[name];
     const id = `setting-${name}`;
     const clearing = (form.data.clear ?? []).includes(name);
+    const isLocked = field.locked && !unlocked;
+    const isDefault = field.default !== null && String(form.data[name] ?? '') === String(field.default);
 
     if (field.type === 'boolean') {
         return (
@@ -28,22 +30,39 @@ function Field({ name, field, form }) {
             <label htmlFor={id} className="form-label fw-semibold small d-flex justify-content-between gap-2">
                 <span>{field.label}</span>
                 {field.type === 'secret' && field.is_set && !clearing && <span className="badge text-bg-success fw-normal">Saved {field.hint}</span>}
+                {field.locked && <span className={`badge fw-normal ${isDefault ? 'text-bg-light border' : 'text-bg-info'}`}>{isDefault ? 'Default' : 'Custom'}</span>}
             </label>
+            <div className={field.locked ? 'input-group' : ''}>
             {field.type === 'select' ? (
-                <select id={id} className={`form-select ${error ? 'is-invalid' : ''}`} value={form.data[name] ?? ''} onChange={(event) => form.setData(name, event.target.value)}>
+                <select id={id} className={`form-select ${error ? 'is-invalid' : ''}`} value={form.data[name] ?? ''} disabled={isLocked} onChange={(event) => form.setData(name, event.target.value)}>
                     {Object.entries(field.options).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
             ) : (
                 <input
+                    list={field.suggestions ? `${id}-suggestions` : undefined}
                     id={id}
                     type={field.type === 'secret' ? 'password' : field.type === 'integer' ? 'number' : 'text'}
                     autoComplete={field.type === 'secret' ? 'new-password' : 'off'}
                     className={`form-control ${error ? 'is-invalid' : ''}`}
                     placeholder={field.type === 'secret' && field.is_set ? 'Leave empty to keep the saved value' : field.placeholder ?? ''}
                     value={form.data[name] ?? ''}
-                    disabled={clearing}
+                    disabled={clearing || isLocked}
                     onChange={(event) => form.setData(name, event.target.value)}
                 />
+            )}
+            {field.locked && (
+                <button type="button" className="btn btn-light border" onClick={onToggleLock} title={isLocked ? 'Unlock to edit' : 'Lock'} aria-pressed={!isLocked}>
+                    <i className={`bi ${isLocked ? 'bi-pencil' : 'bi-lock'} me-1`}></i>{isLocked ? 'Edit' : 'Lock'}
+                </button>
+            )}
+            </div>
+            {field.suggestions && (
+                <datalist id={`${id}-suggestions`}>{field.suggestions.map((option) => <option key={option} value={option} />)}</datalist>
+            )}
+            {field.locked && !isLocked && !isDefault && (
+                <button type="button" className="btn btn-link btn-sm p-0 mt-1" onClick={() => form.setData(name, field.default)}>
+                    <i className="bi bi-arrow-counterclockwise me-1"></i>Reset to default ({field.default})
+                </button>
             )}
             {error ? <div className="invalid-feedback d-block">{error}</div> : field.help && <div className="form-text">{field.help}</div>}
             {field.option_help?.[form.data[name]] && (
@@ -66,6 +85,8 @@ function Field({ name, field, form }) {
 }
 
 function GroupForm({ group, groupKey, extra }) {
+    const [unlocked, setUnlocked] = useState([]);
+    const toggleLock = (name) => setUnlocked((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
     const initial = Object.fromEntries(Object.entries(group.fields).map(([name, field]) => [name, field.type === 'secret' ? '' : field.value ?? '']));
     const form = useForm({ ...initial, clear: [] });
 
@@ -73,11 +94,14 @@ function GroupForm({ group, groupKey, extra }) {
         event.preventDefault();
         form.put(`/admin/settings/${groupKey}`, {
             preserveScroll: true,
-            onSuccess: () => form.setData((data) => ({
-                ...data,
-                ...Object.fromEntries(Object.entries(group.fields).filter(([, field]) => field.type === 'secret').map(([name]) => [name, ''])),
-                clear: [],
-            })),
+            onSuccess: () => {
+                setUnlocked([]);
+                form.setData((data) => ({
+                    ...data,
+                    ...Object.fromEntries(Object.entries(group.fields).filter(([, field]) => field.type === 'secret').map(([name]) => [name, ''])),
+                    clear: [],
+                }));
+            },
         });
     };
 
@@ -94,7 +118,7 @@ function GroupForm({ group, groupKey, extra }) {
             <div className="row g-3">
                 {Object.entries(group.fields)
                     .filter(([, field]) => !field.show_when || Object.entries(field.show_when).every(([key, values]) => values.includes(form.data[key])))
-                    .map(([name, field]) => <Field key={name} name={name} field={field} form={form} />)}
+                    .map(([name, field]) => <Field key={name} name={name} field={field} form={form} unlocked={unlocked.includes(name)} onToggleLock={() => toggleLock(name)} />)}
             </div>
             <div className="d-flex flex-wrap align-items-center gap-2 mt-4 pt-3 border-top">
                 <button type="submit" className="btn rt-btn-primary px-4 py-2" disabled={form.processing}>

@@ -702,6 +702,8 @@ function KeyStatus({ row }) {
 }
 function AiKeys({ keys, today, model, budgets, canManage, seo }) {
 	const active = keys.filter((row) => row.is_active);
+	const accounts = [...new Set(active.map((row) => row.organization).filter(Boolean))];
+	const sharedAccount = accounts.find((organization) => active.filter((row) => row.organization === organization).length > 1);
 	const paused = active.filter((row) => row.paused_seconds > 0).length;
 	const send = (method, url, data = {}, question = null) => {
 		if (question && !window.confirm(question)) return;
@@ -770,6 +772,21 @@ function AiKeys({ keys, today, model, budgets, canManage, seo }) {
 					})
 				]
 			}),
+			sharedAccount && /* @__PURE__ */ jsxs("div", {
+				className: "alert alert-warning d-flex gap-2 align-items-start",
+				children: [/* @__PURE__ */ jsx("i", { className: "bi bi-exclamation-triangle mt-1" }), /* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsx("div", {
+					className: "fw-semibold",
+					children: "Several keys belong to the same Groq account"
+				}), /* @__PURE__ */ jsxs("div", {
+					className: "small",
+					children: [
+						"Groq's rate limit (tokens per minute) applies to the whole account, not to each key, so keys from one account share a single limit and do not add capacity. ",
+						accounts.length === 1 ? "All known keys are in one account." : `Known keys are spread over ${accounts.length} accounts.`,
+						" ",
+						"For more capacity, upgrade the Groq account to the paid Developer tier, or add keys from separate accounts that you are allowed to use. Accounts are detected the first time a key is rate limited."
+					]
+				})] })]
+			}),
 			canManage ? /* @__PURE__ */ jsx(AddKeyForm, {}) : /* @__PURE__ */ jsxs("div", {
 				className: "alert alert-light border small",
 				children: [/* @__PURE__ */ jsx("i", { className: "bi bi-lock me-2" }), "Only super admins can add, disable or delete keys."]
@@ -805,13 +822,20 @@ function AiKeys({ keys, today, model, budgets, canManage, seo }) {
 						}) }), keys.map((row) => /* @__PURE__ */ jsxs("tr", {
 							className: row.is_active ? "" : "text-muted",
 							children: [
-								/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsx("div", {
-									className: "fw-semibold",
-									children: row.name || (row.source === "env" ? "From .env" : "Unnamed key")
-								}), /* @__PURE__ */ jsx("div", {
-									className: "rt-key-mono text-muted",
-									children: row.label
-								})] }),
+								/* @__PURE__ */ jsxs("td", { children: [
+									/* @__PURE__ */ jsx("div", {
+										className: "fw-semibold",
+										children: row.name || (row.source === "env" ? "From .env" : "Unnamed key")
+									}),
+									/* @__PURE__ */ jsx("div", {
+										className: "rt-key-mono text-muted",
+										children: row.label
+									}),
+									row.organization && /* @__PURE__ */ jsxs("div", {
+										className: "small text-muted",
+										children: ["Groq account …", row.organization.slice(-6)]
+									})
+								] }),
 								/* @__PURE__ */ jsx("td", { children: row.source === "env" ? /* @__PURE__ */ jsxs("span", {
 									className: "badge text-bg-light border",
 									children: [/* @__PURE__ */ jsx("i", { className: "bi bi-file-earmark-code me-1" }), ".env"]
@@ -2683,10 +2707,12 @@ var Settings_exports = /* @__PURE__ */ __exportAll({ default: () => Settings });
 * One field. Secrets are write-only: the current value is never sent to the browser, only a hint
 * such as "…a1b2". Leaving a secret empty keeps the saved one.
 */
-function Field({ name, field, form }) {
+function Field({ name, field, form, unlocked = false, onToggleLock }) {
 	const error = form.errors[name];
 	const id = `setting-${name}`;
 	const clearing = (form.data.clear ?? []).includes(name);
+	const isLocked = field.locked && !unlocked;
+	const isDefault = field.default !== null && String(form.data[name] ?? "") === String(field.default);
 	if (field.type === "boolean") return /* @__PURE__ */ jsxs("div", {
 		className: "col-12",
 		children: [/* @__PURE__ */ jsxs("div", {
@@ -2714,29 +2740,63 @@ function Field({ name, field, form }) {
 			/* @__PURE__ */ jsxs("label", {
 				htmlFor: id,
 				className: "form-label fw-semibold small d-flex justify-content-between gap-2",
-				children: [/* @__PURE__ */ jsx("span", { children: field.label }), field.type === "secret" && field.is_set && !clearing && /* @__PURE__ */ jsxs("span", {
-					className: "badge text-bg-success fw-normal",
-					children: ["Saved ", field.hint]
+				children: [
+					/* @__PURE__ */ jsx("span", { children: field.label }),
+					field.type === "secret" && field.is_set && !clearing && /* @__PURE__ */ jsxs("span", {
+						className: "badge text-bg-success fw-normal",
+						children: ["Saved ", field.hint]
+					}),
+					field.locked && /* @__PURE__ */ jsx("span", {
+						className: `badge fw-normal ${isDefault ? "text-bg-light border" : "text-bg-info"}`,
+						children: isDefault ? "Default" : "Custom"
+					})
+				]
+			}),
+			/* @__PURE__ */ jsxs("div", {
+				className: field.locked ? "input-group" : "",
+				children: [field.type === "select" ? /* @__PURE__ */ jsx("select", {
+					id,
+					className: `form-select ${error ? "is-invalid" : ""}`,
+					value: form.data[name] ?? "",
+					disabled: isLocked,
+					onChange: (event) => form.setData(name, event.target.value),
+					children: Object.entries(field.options).map(([value, label]) => /* @__PURE__ */ jsx("option", {
+						value,
+						children: label
+					}, value))
+				}) : /* @__PURE__ */ jsx("input", {
+					list: field.suggestions ? `${id}-suggestions` : void 0,
+					id,
+					type: field.type === "secret" ? "password" : field.type === "integer" ? "number" : "text",
+					autoComplete: field.type === "secret" ? "new-password" : "off",
+					className: `form-control ${error ? "is-invalid" : ""}`,
+					placeholder: field.type === "secret" && field.is_set ? "Leave empty to keep the saved value" : field.placeholder ?? "",
+					value: form.data[name] ?? "",
+					disabled: clearing || isLocked,
+					onChange: (event) => form.setData(name, event.target.value)
+				}), field.locked && /* @__PURE__ */ jsxs("button", {
+					type: "button",
+					className: "btn btn-light border",
+					onClick: onToggleLock,
+					title: isLocked ? "Unlock to edit" : "Lock",
+					"aria-pressed": !isLocked,
+					children: [/* @__PURE__ */ jsx("i", { className: `bi ${isLocked ? "bi-pencil" : "bi-lock"} me-1` }), isLocked ? "Edit" : "Lock"]
 				})]
 			}),
-			field.type === "select" ? /* @__PURE__ */ jsx("select", {
-				id,
-				className: `form-select ${error ? "is-invalid" : ""}`,
-				value: form.data[name] ?? "",
-				onChange: (event) => form.setData(name, event.target.value),
-				children: Object.entries(field.options).map(([value, label]) => /* @__PURE__ */ jsx("option", {
-					value,
-					children: label
-				}, value))
-			}) : /* @__PURE__ */ jsx("input", {
-				id,
-				type: field.type === "secret" ? "password" : field.type === "integer" ? "number" : "text",
-				autoComplete: field.type === "secret" ? "new-password" : "off",
-				className: `form-control ${error ? "is-invalid" : ""}`,
-				placeholder: field.type === "secret" && field.is_set ? "Leave empty to keep the saved value" : field.placeholder ?? "",
-				value: form.data[name] ?? "",
-				disabled: clearing,
-				onChange: (event) => form.setData(name, event.target.value)
+			field.suggestions && /* @__PURE__ */ jsx("datalist", {
+				id: `${id}-suggestions`,
+				children: field.suggestions.map((option) => /* @__PURE__ */ jsx("option", { value: option }, option))
+			}),
+			field.locked && !isLocked && !isDefault && /* @__PURE__ */ jsxs("button", {
+				type: "button",
+				className: "btn btn-link btn-sm p-0 mt-1",
+				onClick: () => form.setData(name, field.default),
+				children: [
+					/* @__PURE__ */ jsx("i", { className: "bi bi-arrow-counterclockwise me-1" }),
+					"Reset to default (",
+					field.default,
+					")"
+				]
 			}),
 			error ? /* @__PURE__ */ jsx("div", {
 				className: "invalid-feedback d-block",
@@ -2767,6 +2827,8 @@ function Field({ name, field, form }) {
 	});
 }
 function GroupForm({ group, groupKey, extra }) {
+	const [unlocked, setUnlocked] = useState([]);
+	const toggleLock = (name) => setUnlocked((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
 	const initial = Object.fromEntries(Object.entries(group.fields).map(([name, field]) => [name, field.type === "secret" ? "" : field.value ?? ""]));
 	const form = useForm({
 		...initial,
@@ -2776,11 +2838,14 @@ function GroupForm({ group, groupKey, extra }) {
 		event.preventDefault();
 		form.put(`/admin/settings/${groupKey}`, {
 			preserveScroll: true,
-			onSuccess: () => form.setData((data) => ({
-				...data,
-				...Object.fromEntries(Object.entries(group.fields).filter(([, field]) => field.type === "secret").map(([name]) => [name, ""])),
-				clear: []
-			}))
+			onSuccess: () => {
+				setUnlocked([]);
+				form.setData((data) => ({
+					...data,
+					...Object.fromEntries(Object.entries(group.fields).filter(([, field]) => field.type === "secret").map(([name]) => [name, ""])),
+					clear: []
+				}));
+			}
 		});
 	};
 	return /* @__PURE__ */ jsxs("form", {
@@ -2808,7 +2873,9 @@ function GroupForm({ group, groupKey, extra }) {
 				children: Object.entries(group.fields).filter(([, field]) => !field.show_when || Object.entries(field.show_when).every(([key, values]) => values.includes(form.data[key]))).map(([name, field]) => /* @__PURE__ */ jsx(Field, {
 					name,
 					field,
-					form
+					form,
+					unlocked: unlocked.includes(name),
+					onToggleLock: () => toggleLock(name)
 				}, name))
 			}),
 			/* @__PURE__ */ jsxs("div", {

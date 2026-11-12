@@ -367,10 +367,15 @@ class GroqService
     protected function postWithKeyFailover(array $payload, string $scope, float $startedAt): Response
     {
         $lastResponse = null;
-        $maxWait = (int) config('services.groq.key_failover_max_wait_seconds', 20);
+        $maxWait = (int) config('services.groq.key_failover_max_wait_seconds', 60);
 
         for ($round = 1; $round <= 2; $round++) {
             foreach ($this->keys->available() as $key) {
+                // A rate limit on one key can pause others from the same Groq account mid-loop.
+                if ($this->keys->isPaused($key)) {
+                    continue;
+                }
+
                 $response = $this->sendWithKey($key, $payload, $scope, $startedAt);
 
                 if (! in_array($response->status(), self::KEY_FAILURE_STATUSES, true)) {
@@ -436,7 +441,25 @@ class GroqService
             $retryAfter = (int) $response->header('retry-after');
             $seconds = $retryAfter > 0 ? $retryAfter : (int) config('services.groq.key_rate_limit_cooldown_seconds', 60);
 
-            Log::warning('Groq key rate limited, switching to the next key', ['key' => $this->keys->label($key), 'paused_seconds' => $seconds]);
+            if (preg_match('/organization `?(org_[A-Za-z0-9]+)`?/', (string) $response->json('error.message'), $match)) {
+                $this->keys->rememberOrganization($key, $match[1]);
+            }
+
+            // Keys from the same Groq account share the limit, so pause them together instead of
+            // trying each one only to be refused again.
+            $sharing = $this->keys->keysSharingLimitWith($key);
+
+            foreach ($sharing as $sharedKey) {
+                $this->keys->pause($sharedKey, $seconds);
+            }
+
+            Log::warning('Groq key rate limited, switching to the next key', [
+                'key' => $this->keys->label($key),
+                'paused_seconds' => $seconds,
+                'keys_paused_with_it' => count($sharing) - 1,
+            ]);
+
+            return;
         } else {
             $seconds = (int) config('services.groq.key_rejected_cooldown_seconds', 3600);
 

@@ -75,6 +75,8 @@ function KeyStatus({ row }) {
 
 export default function AiKeys({ keys, today, model, budgets, canManage, seo }) {
     const active = keys.filter((row) => row.is_active);
+    const accounts = [...new Set(active.map((row) => row.organization).filter(Boolean))];
+    const sharedAccount = accounts.find((organization) => active.filter((row) => row.organization === organization).length > 1);
     const paused = active.filter((row) => row.paused_seconds > 0).length;
 
     const send = (method, url, data = {}, question = null) => {
@@ -105,6 +107,21 @@ export default function AiKeys({ keys, today, model, budgets, canManage, seo }) 
                 <div className="col-sm-6 col-xl-3"><StatCard icon="bi-cpu" tone="violet" label="Model" value={<span className="fs-6 text-break">{model}</span>} hint={`${formatNumber(today.failures)} failed requests today`} /></div>
             </div>
 
+            {sharedAccount && (
+                <div className="alert alert-warning d-flex gap-2 align-items-start">
+                    <i className="bi bi-exclamation-triangle mt-1"></i>
+                    <div>
+                        <div className="fw-semibold">Several keys belong to the same Groq account</div>
+                        <div className="small">
+                            Groq's rate limit (tokens per minute) applies to the whole account, not to each key, so keys from one account
+                            share a single limit and do not add capacity. {accounts.length === 1 ? 'All known keys are in one account.' : `Known keys are spread over ${accounts.length} accounts.`}{' '}
+                            For more capacity, upgrade the Groq account to the paid Developer tier, or add keys from separate accounts that you are allowed to use.
+                            Accounts are detected the first time a key is rate limited.
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {canManage ? <AddKeyForm /> : (
                 <div className="alert alert-light border small"><i className="bi bi-lock me-2"></i>Only super admins can add, disable or delete keys.</div>
             )}
@@ -128,6 +145,7 @@ export default function AiKeys({ keys, today, model, budgets, canManage, seo }) 
                                     <td>
                                         <div className="fw-semibold">{row.name || (row.source === 'env' ? 'From .env' : 'Unnamed key')}</div>
                                         <div className="rt-key-mono text-muted">{row.label}</div>
+                                        {row.organization && <div className="small text-muted">Groq account …{row.organization.slice(-6)}</div>}
                                     </td>
                                     <td>
                                         {row.source === 'env'
