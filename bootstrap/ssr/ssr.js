@@ -29,15 +29,23 @@ var NAVIGATION = [
 	},
 	{
 		group: "Manage",
-		items: [{
-			href: "/admin/users",
-			label: "Users",
-			icon: "bi-people"
-		}, {
-			href: "/admin/resumes",
-			label: "Tailored resumes",
-			icon: "bi-file-earmark-text"
-		}]
+		items: [
+			{
+				href: "/admin/users",
+				label: "Users",
+				icon: "bi-people"
+			},
+			{
+				href: "/admin/payments",
+				label: "Payments",
+				icon: "bi-cash-coin"
+			},
+			{
+				href: "/admin/resumes",
+				label: "Tailored resumes",
+				icon: "bi-file-earmark-text"
+			}
+		]
 	},
 	{
 		group: "Content",
@@ -445,7 +453,7 @@ function AdSense({ settings, adsTxt, adsTxtUrl, sitemapUrl, canManage, seo }) {
 //#endregion
 //#region resources/js/Components/AdminUi.jsx
 var formatNumber = (value) => Number(value || 0).toLocaleString();
-var formatDate$6 = (value, withTime = false) => {
+var formatDate$7 = (value, withTime = false) => {
 	if (!value) return "—";
 	const date = new Date(value);
 	return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString(void 0, withTime ? {
@@ -488,17 +496,104 @@ function StatCard({ label, value, hint, icon, tone = "indigo" }) {
 		})
 	});
 }
-function PlanBadge({ plan, complimentary = false }) {
+var PLAN_SOURCE_NOTES = {
+	gift: " (trial)",
+	trial: " (trial for all)"
+};
+function PlanBadge({ plan, source = null }) {
 	return plan === "pro" ? /* @__PURE__ */ jsxs("span", {
 		className: "rt-plan-pill",
 		children: [
 			/* @__PURE__ */ jsx("i", { className: "bi bi-stars" }),
 			"Pro",
-			complimentary ? " (gift)" : ""
+			PLAN_SOURCE_NOTES[source] ?? ""
 		]
 	}) : /* @__PURE__ */ jsx("span", {
 		className: "badge text-bg-light border",
 		children: "Free"
+	});
+}
+var describeTrialLimit = (tailorLimit) => {
+	if (tailorLimit === null || tailorLimit === void 0) return "Normal Pro limit";
+	return tailorLimit === 0 ? "Unlimited" : `${formatNumber(tailorLimit)} tailored CV${tailorLimit === 1 ? "" : "s"}`;
+};
+/**
+* Days of Pro plus an optional cap on CVs tailored during the trial. A blank cap keeps the normal
+* Pro limit; 0 means unlimited.
+*/
+function ProTrialForm({ url, limits, submitLabel, idPrefix }) {
+	const form = useForm({
+		days: 7,
+		tailor_limit: ""
+	});
+	const submit = (event) => {
+		event.preventDefault();
+		form.transform((data) => ({
+			days: Number(data.days),
+			tailor_limit: data.tailor_limit === "" ? null : Number(data.tailor_limit)
+		}));
+		form.post(url, { preserveScroll: true });
+	};
+	return /* @__PURE__ */ jsxs("form", {
+		onSubmit: submit,
+		noValidate: true,
+		children: [/* @__PURE__ */ jsxs("div", {
+			className: "row g-2 align-items-start",
+			children: [/* @__PURE__ */ jsxs("div", {
+				className: "col-sm-4",
+				children: [
+					/* @__PURE__ */ jsx("label", {
+						htmlFor: `${idPrefix}-days`,
+						className: "form-label fw-semibold small mb-1",
+						children: "Days"
+					}),
+					/* @__PURE__ */ jsx("input", {
+						id: `${idPrefix}-days`,
+						type: "number",
+						min: "1",
+						max: limits.max_days,
+						className: `form-control form-control-sm ${form.errors.days ? "is-invalid" : ""}`,
+						value: form.data.days,
+						onChange: (event) => form.setData("days", event.target.value)
+					}),
+					form.errors.days && /* @__PURE__ */ jsx("div", {
+						className: "invalid-feedback",
+						children: form.errors.days
+					})
+				]
+			}), /* @__PURE__ */ jsxs("div", {
+				className: "col-sm-8",
+				children: [
+					/* @__PURE__ */ jsx("label", {
+						htmlFor: `${idPrefix}-limit`,
+						className: "form-label fw-semibold small mb-1",
+						children: "CV tailoring limit for the trial"
+					}),
+					/* @__PURE__ */ jsx("input", {
+						id: `${idPrefix}-limit`,
+						type: "number",
+						min: "0",
+						max: limits.max_tailor_limit,
+						placeholder: "Normal Pro limit",
+						className: `form-control form-control-sm ${form.errors.tailor_limit ? "is-invalid" : ""}`,
+						value: form.data.tailor_limit,
+						onChange: (event) => form.setData("tailor_limit", event.target.value)
+					}),
+					form.errors.tailor_limit ? /* @__PURE__ */ jsx("div", {
+						className: "invalid-feedback",
+						children: form.errors.tailor_limit
+					}) : /* @__PURE__ */ jsx("div", {
+						className: "form-text",
+						children: "Blank = normal Pro limit per month, 0 = unlimited."
+					})
+				]
+			})]
+		}), /* @__PURE__ */ jsxs("button", {
+			type: "submit",
+			className: "btn btn-sm rt-btn-primary px-3 py-1 mt-2",
+			disabled: form.processing,
+			children: [/* @__PURE__ */ jsx("i", { className: "bi bi-gift me-1" }), form.processing ? "Saving..." : submitLabel]
+		})]
 	});
 }
 function ScoreChange({ before, after }) {
@@ -846,7 +941,7 @@ function AiKeys({ keys, today, model, budgets, canManage, seo }) {
 								/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(KeyStatus, { row }) }),
 								/* @__PURE__ */ jsx("td", {
 									className: "small text-muted",
-									children: row.source === "env" ? "—" : /* @__PURE__ */ jsxs(Fragment, { children: [formatDate$6(row.created_at), row.added_by && /* @__PURE__ */ jsxs("div", { children: ["by ", row.added_by] })] })
+									children: row.source === "env" ? "—" : /* @__PURE__ */ jsxs(Fragment, { children: [formatDate$7(row.created_at), row.added_by && /* @__PURE__ */ jsxs("div", { children: ["by ", row.added_by] })] })
 								}),
 								/* @__PURE__ */ jsxs("td", {
 									className: "text-end text-nowrap",
@@ -926,8 +1021,8 @@ function Dashboard({ stats, ai, trend, recentUsers, recentResumes, seo }) {
 							label: "Pro",
 							icon: "bi-stars",
 							tone: "violet",
-							value: formatNumber(stats.pro_subscribers + stats.complimentary_pro),
-							hint: `${formatNumber(stats.pro_subscribers)} paying · ${formatNumber(stats.complimentary_pro)} gifted`
+							value: formatNumber(stats.pro_subscribers + stats.paid_pro + stats.complimentary_pro),
+							hint: `${formatNumber(stats.pro_subscribers)} card · ${formatNumber(stats.paid_pro)} rupee · ${formatNumber(stats.complimentary_pro)} trial${stats.payments_awaiting_review ? ` · ${formatNumber(stats.payments_awaiting_review)} to review` : ""}`
 						})
 					}),
 					/* @__PURE__ */ jsx("div", {
@@ -993,7 +1088,7 @@ function Dashboard({ stats, ai, trend, recentUsers, recentResumes, seo }) {
 					"aria-label": "Tailored resumes per day",
 					children: trend.map((day) => /* @__PURE__ */ jsxs("div", {
 						className: "rt-trend-bar",
-						title: `${formatDate$6(day.date)}: ${day.count}`,
+						title: `${formatDate$7(day.date)}: ${day.count}`,
 						children: [
 							day.count > 0 && /* @__PURE__ */ jsx("small", { children: day.count }),
 							/* @__PURE__ */ jsx("span", { style: { height: `${day.count / peak * 80}%` } }),
@@ -1031,7 +1126,7 @@ function Dashboard({ stats, ai, trend, recentUsers, recentResumes, seo }) {
 									children: user.email
 								})] }), /* @__PURE__ */ jsx("td", {
 									className: "text-end small text-muted text-nowrap",
-									children: formatDate$6(user.created_at)
+									children: formatDate$7(user.created_at)
 								})] }, user.id)) })
 							})
 						})]
@@ -1072,7 +1167,7 @@ function Dashboard({ stats, ai, trend, recentUsers, recentResumes, seo }) {
 									}) }),
 									/* @__PURE__ */ jsx("td", {
 										className: "text-end small text-muted text-nowrap",
-										children: formatDate$6(resume.created_at, true)
+										children: formatDate$7(resume.created_at, true)
 									})
 								] }, resume.id)) })
 							})
@@ -1929,7 +2024,7 @@ function Messages({ messages, unreadCount, onlyUnread, seo }) {
 							}),
 							/* @__PURE__ */ jsx("span", {
 								className: "ms-auto small text-muted text-nowrap",
-								children: formatDate$6(message.created_at, true)
+								children: formatDate$7(message.created_at, true)
 							})
 						]
 					}), /* @__PURE__ */ jsxs("div", {
@@ -1969,6 +2064,247 @@ function Messages({ messages, unreadCount, onlyUnread, seo }) {
 				}, message.id))
 			}),
 			/* @__PURE__ */ jsx(Pagination, { paginator: messages })
+		]
+	});
+}
+//#endregion
+//#region resources/js/Pages/Admin/Payments/Index.jsx
+var Index_exports$8 = /* @__PURE__ */ __exportAll({ default: () => PaymentsIndex });
+var STATUS_BADGES$1 = {
+	pending: "text-bg-light border",
+	awaiting_review: "text-bg-warning",
+	paid: "text-bg-success",
+	failed: "text-bg-danger",
+	rejected: "text-bg-danger"
+};
+function PaymentsIndex({ payments, filters, awaitingReview, channels, statuses, seo }) {
+	const [form, setForm] = useState({
+		search: filters.search ?? "",
+		status: filters.status ?? "",
+		channel: filters.channel ?? ""
+	});
+	const apply = (next) => {
+		const query = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== ""));
+		router.get("/admin/payments", query, {
+			preserveState: true,
+			preserveScroll: true,
+			replace: true
+		});
+	};
+	const change = (field, value) => {
+		const next = {
+			...form,
+			[field]: value
+		};
+		setForm(next);
+		if (field !== "search") apply(next);
+	};
+	const approve = (payment) => {
+		if (window.confirm(`Approve ${payment.amount_label} from ${payment.user?.name ?? "this user"}? Only approve once you see the money in your account.`)) router.post(`/admin/payments/${payment.id}/approve`, {}, { preserveScroll: true });
+	};
+	const reject = (payment) => {
+		const note = window.prompt("Why is this payment rejected? The user sees this note.");
+		if (note) router.post(`/admin/payments/${payment.id}/reject`, { note }, { preserveScroll: true });
+	};
+	const offline = channels.filter((channel) => !channel.available);
+	return /* @__PURE__ */ jsxs(AdminLayout, {
+		title: "Payments",
+		subtitle: `${payments.total.toLocaleString()} rupee payment${payments.total === 1 ? "" : "s"}${awaitingReview ? ` · ${awaitingReview} waiting for review` : ""}`,
+		seo,
+		children: [
+			offline.length > 0 && /* @__PURE__ */ jsxs("div", {
+				className: "alert alert-light border small",
+				children: [
+					/* @__PURE__ */ jsx("i", { className: "bi bi-info-circle me-1" }),
+					"Not offered to users yet: ",
+					offline.map((channel) => channel.label).join(", "),
+					". Switch them on and fill in their details in ",
+					/* @__PURE__ */ jsx(Link, {
+						href: "/admin/settings",
+						children: "Settings"
+					}),
+					"."
+				]
+			}),
+			/* @__PURE__ */ jsx("form", {
+				className: "rt-card p-3 mb-3",
+				onSubmit: (event) => {
+					event.preventDefault();
+					apply(form);
+				},
+				children: /* @__PURE__ */ jsxs("div", {
+					className: "row g-2 align-items-end",
+					children: [
+						/* @__PURE__ */ jsxs("div", {
+							className: "col-md-5",
+							children: [/* @__PURE__ */ jsx("label", {
+								htmlFor: "search",
+								className: "rt-filter-label",
+								children: "Search"
+							}), /* @__PURE__ */ jsxs("div", {
+								className: "input-group",
+								children: [/* @__PURE__ */ jsx("input", {
+									id: "search",
+									type: "search",
+									className: "form-control rt-input",
+									placeholder: "Reference, TID, name or email",
+									value: form.search,
+									onChange: (event) => change("search", event.target.value)
+								}), /* @__PURE__ */ jsx("button", {
+									className: "btn rt-btn-soft",
+									type: "submit",
+									"aria-label": "Search",
+									children: /* @__PURE__ */ jsx("i", { className: "bi bi-search" })
+								})]
+							})]
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "col-6 col-md-3",
+							children: [/* @__PURE__ */ jsx("label", {
+								htmlFor: "status",
+								className: "rt-filter-label",
+								children: "Status"
+							}), /* @__PURE__ */ jsxs("select", {
+								id: "status",
+								className: "form-select",
+								value: form.status,
+								onChange: (event) => change("status", event.target.value),
+								children: [/* @__PURE__ */ jsx("option", {
+									value: "",
+									children: "Any"
+								}), statuses.map((status) => /* @__PURE__ */ jsx("option", {
+									value: status.value,
+									children: status.label
+								}, status.value))]
+							})]
+						}),
+						/* @__PURE__ */ jsxs("div", {
+							className: "col-6 col-md-2",
+							children: [/* @__PURE__ */ jsx("label", {
+								htmlFor: "channel",
+								className: "rt-filter-label",
+								children: "Channel"
+							}), /* @__PURE__ */ jsxs("select", {
+								id: "channel",
+								className: "form-select",
+								value: form.channel,
+								onChange: (event) => change("channel", event.target.value),
+								children: [/* @__PURE__ */ jsx("option", {
+									value: "",
+									children: "Any"
+								}), channels.map((channel) => /* @__PURE__ */ jsx("option", {
+									value: channel.value,
+									children: channel.label
+								}, channel.value))]
+							})]
+						}),
+						/* @__PURE__ */ jsx("div", {
+							className: "col-md-2",
+							children: /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "btn btn-link text-muted w-100",
+								onClick: () => {
+									const empty = {
+										search: "",
+										status: "",
+										channel: ""
+									};
+									setForm(empty);
+									apply(empty);
+								},
+								children: "Clear filters"
+							})
+						})
+					]
+				})
+			}),
+			/* @__PURE__ */ jsxs("section", {
+				className: "rt-card",
+				children: [/* @__PURE__ */ jsx("div", {
+					className: "table-responsive",
+					children: /* @__PURE__ */ jsxs("table", {
+						className: "table rt-admin-table",
+						children: [/* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
+							/* @__PURE__ */ jsx("th", { children: "User" }),
+							/* @__PURE__ */ jsx("th", { children: "Payment" }),
+							/* @__PURE__ */ jsx("th", { children: "Details" }),
+							/* @__PURE__ */ jsx("th", { children: "Status" }),
+							/* @__PURE__ */ jsx("th", { children: "Created" }),
+							/* @__PURE__ */ jsx("th", {})
+						] }) }), /* @__PURE__ */ jsxs("tbody", { children: [payments.data.length === 0 && /* @__PURE__ */ jsx("tr", { children: /* @__PURE__ */ jsx("td", {
+							colSpan: "6",
+							className: "text-center text-muted py-4",
+							children: "No payments found."
+						}) }), payments.data.map((payment) => /* @__PURE__ */ jsxs("tr", { children: [
+							/* @__PURE__ */ jsx("td", { children: payment.user ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(Link, {
+								href: `/admin/users/${payment.user.id}`,
+								className: "fw-semibold",
+								children: payment.user.name
+							}), /* @__PURE__ */ jsx("div", {
+								className: "small text-muted",
+								children: payment.user.email
+							})] }) : /* @__PURE__ */ jsx("span", {
+								className: "text-muted",
+								children: "Deleted user"
+							}) }),
+							/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsx("div", {
+								className: "fw-semibold",
+								children: payment.amount_label
+							}), /* @__PURE__ */ jsxs("div", {
+								className: "small text-muted",
+								children: [
+									payment.channel_label,
+									" · ",
+									payment.interval === "yearly" ? "1 year" : "1 month"
+								]
+							})] }),
+							/* @__PURE__ */ jsxs("td", {
+								className: "small",
+								children: [
+									/* @__PURE__ */ jsxs("div", { children: ["Ref ", /* @__PURE__ */ jsx("code", { children: payment.reference })] }),
+									payment.payer_reference && /* @__PURE__ */ jsxs("div", { children: ["TID ", /* @__PURE__ */ jsx("code", { children: payment.payer_reference })] }),
+									payment.gateway_transaction_id && /* @__PURE__ */ jsxs("div", { children: ["Gateway ", /* @__PURE__ */ jsx("code", { children: payment.gateway_transaction_id })] }),
+									payment.has_proof && /* @__PURE__ */ jsxs("a", {
+										href: `/admin/payments/${payment.id}/proof`,
+										target: "_blank",
+										rel: "noreferrer",
+										children: [/* @__PURE__ */ jsx("i", { className: "bi bi-paperclip me-1" }), "Receipt"]
+									}),
+									payment.admin_note && /* @__PURE__ */ jsxs("div", {
+										className: "text-muted",
+										children: ["Note: ", payment.admin_note]
+									})
+								]
+							}),
+							/* @__PURE__ */ jsxs("td", { children: [/* @__PURE__ */ jsx("span", {
+								className: `badge ${STATUS_BADGES$1[payment.status] ?? "text-bg-light"}`,
+								children: payment.status_label
+							}), payment.reviewer && /* @__PURE__ */ jsxs("div", {
+								className: "small text-muted mt-1",
+								children: ["by ", payment.reviewer]
+							})] }),
+							/* @__PURE__ */ jsx("td", {
+								className: "small text-muted text-nowrap",
+								children: formatDate$7(payment.created_at, true)
+							}),
+							/* @__PURE__ */ jsx("td", {
+								className: "text-end text-nowrap",
+								children: ["pending", "awaiting_review"].includes(payment.status) && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsxs("button", {
+									type: "button",
+									className: "btn btn-sm btn-outline-success me-1",
+									onClick: () => approve(payment),
+									children: [/* @__PURE__ */ jsx("i", { className: "bi bi-check-lg me-1" }), "Approve"]
+								}), /* @__PURE__ */ jsx("button", {
+									type: "button",
+									className: "btn btn-sm btn-outline-danger",
+									onClick: () => reject(payment),
+									children: "Reject"
+								})] })
+							})
+						] }, payment.id))] })]
+					})
+				}), /* @__PURE__ */ jsx(Pagination, { paginator: payments })]
+			})
 		]
 	});
 }
@@ -2356,7 +2692,7 @@ function PostsIndex({ posts, counts, status, seo }) {
 								}),
 								post.status === "published" && !post.is_live && /* @__PURE__ */ jsxs("span", {
 									className: "badge text-bg-info",
-									children: ["Scheduled ", formatDate$6(post.published_at)]
+									children: ["Scheduled ", formatDate$7(post.published_at)]
 								}),
 								post.status === "draft" && /* @__PURE__ */ jsx("span", {
 									className: "badge text-bg-secondary",
@@ -2365,7 +2701,7 @@ function PostsIndex({ posts, counts, status, seo }) {
 							] }),
 							/* @__PURE__ */ jsx("td", {
 								className: "small text-muted text-nowrap",
-								children: formatDate$6(post.updated_at, true)
+								children: formatDate$7(post.updated_at, true)
 							}),
 							/* @__PURE__ */ jsx("td", {
 								className: "text-end text-nowrap",
@@ -2629,7 +2965,7 @@ function ResumesIndex({ resumes, filters, templates, maxBulk, seo }) {
 								}) }),
 								/* @__PURE__ */ jsx("td", {
 									className: "small text-muted text-nowrap",
-									children: formatDate$6(resume.created_at, true)
+									children: formatDate$7(resume.created_at, true)
 								}),
 								/* @__PURE__ */ jsxs("td", {
 									className: "text-end text-nowrap",
@@ -2733,6 +3069,31 @@ function Field({ name, field, form, unlocked = false, onToggleLock }) {
 			className: "form-text ms-5",
 			children: field.help
 		})]
+	});
+	if (field.type === "text") return /* @__PURE__ */ jsxs("div", {
+		className: "col-12",
+		children: [
+			/* @__PURE__ */ jsx("label", {
+				htmlFor: id,
+				className: "form-label fw-semibold small",
+				children: field.label
+			}),
+			/* @__PURE__ */ jsx("textarea", {
+				id,
+				rows: 3,
+				className: `form-control ${error ? "is-invalid" : ""}`,
+				placeholder: field.placeholder ?? "",
+				value: form.data[name] ?? "",
+				onChange: (event) => form.setData(name, event.target.value)
+			}),
+			error ? /* @__PURE__ */ jsx("div", {
+				className: "invalid-feedback d-block",
+				children: error
+			}) : field.help && /* @__PURE__ */ jsx("div", {
+				className: "form-text",
+				children: field.help
+			})
+		]
 	});
 	return /* @__PURE__ */ jsxs("div", {
 		className: "col-md-6",
@@ -2893,7 +3254,7 @@ function GroupForm({ group, groupKey, extra }) {
 		]
 	});
 }
-function Settings({ groups, tab, webhookUrl, seo }) {
+function Settings({ groups, tab, webhookUrl, paymentReturnUrls = {}, seo }) {
 	const { errors } = usePage().props;
 	const [active, setActive] = useState(tab);
 	const [isTesting, setIsTesting] = useState(null);
@@ -2946,6 +3307,46 @@ function Settings({ groups, tab, webhookUrl, seo }) {
 					className: "text-danger mt-2",
 					children: errors.stripe_test
 				})
+			]
+		}),
+		jazzcash: /* @__PURE__ */ jsxs("div", {
+			className: "alert alert-light border small mb-4",
+			children: [
+				/* @__PURE__ */ jsx("div", {
+					className: "fw-semibold mb-1",
+					children: "Return URL"
+				}),
+				"In the JazzCash merchant portal, set the return URL to ",
+				/* @__PURE__ */ jsx("code", { children: paymentReturnUrls.jazzcash }),
+				". Test in Sandbox first, then switch to Live with your live credentials. Payments are listed under ",
+				/* @__PURE__ */ jsx(Link, {
+					href: "/admin/payments",
+					children: "Payments"
+				}),
+				"."
+			]
+		}),
+		easypaisa: /* @__PURE__ */ jsxs("div", {
+			className: "alert alert-light border small mb-4",
+			children: [
+				/* @__PURE__ */ jsx("div", {
+					className: "fw-semibold mb-1",
+					children: "Post-back URL"
+				}),
+				"Easypaisa sends payers back to ",
+				/* @__PURE__ */ jsx("code", { children: paymentReturnUrls.easypaisa }),
+				". Ask Easypaisa to allow this URL for your store if they require it. Every payment is confirmed with Easypaisa's transaction inquiry API, so the API username, password and account number are required."
+			]
+		}),
+		bank: /* @__PURE__ */ jsxs("div", {
+			className: "alert alert-light border small mb-4",
+			children: [
+				"Users see these details after choosing bank transfer, then submit their transaction reference. Approve or reject them under ",
+				/* @__PURE__ */ jsx(Link, {
+					href: "/admin/payments",
+					children: "Payments"
+				}),
+				"; Pro starts on approval."
 			]
 		}),
 		mail: /* @__PURE__ */ jsxs("div", {
@@ -3031,7 +3432,48 @@ function Settings({ groups, tab, webhookUrl, seo }) {
 //#endregion
 //#region resources/js/Pages/Admin/Users/Index.jsx
 var Index_exports$5 = /* @__PURE__ */ __exportAll({ default: () => UsersIndex });
-function UsersIndex({ users, filters, roles, seo }) {
+function SiteTrialCard({ siteTrial, trialLimits, canManage }) {
+	const stop = () => {
+		if (window.confirm("End the Pro trial for everyone now? Accounts go back to their own plan.")) router.delete("/admin/pro-trial", { preserveScroll: true });
+	};
+	return /* @__PURE__ */ jsxs("section", {
+		className: "rt-card p-3 p-lg-4 mb-3",
+		children: [
+			/* @__PURE__ */ jsxs("div", {
+				className: "d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2",
+				children: [/* @__PURE__ */ jsxs("h2", {
+					className: "rt-card-title mb-0",
+					children: [/* @__PURE__ */ jsx("i", { className: "bi bi-gift" }), "Pro trial for everyone"]
+				}), siteTrial ? /* @__PURE__ */ jsxs("span", {
+					className: "badge text-bg-success",
+					children: ["Running until ", formatDate$7(siteTrial.ends_at, true)]
+				}) : /* @__PURE__ */ jsx("span", {
+					className: "badge text-bg-light border",
+					children: "Off"
+				})]
+			}),
+			/* @__PURE__ */ jsx("p", {
+				className: "small text-muted mb-3",
+				children: siteTrial ? `Every signed-in account, including new sign-ups, has Pro since ${formatDate$7(siteTrial.starts_at)}. Limit: ${describeTrialLimit(siteTrial.tailor_limit)}${siteTrial.tailor_limit ? " per account for the whole trial" : ""}. Subscribers and accounts with their own trial keep their plan.` : "Give every signed-in account Pro for a number of days, with your own limit on tailored CVs. Guests stay on Free."
+			}),
+			canManage ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(ProTrialForm, {
+				url: "/admin/pro-trial",
+				limits: trialLimits,
+				submitLabel: siteTrial ? "Restart trial for everyone" : "Start trial for everyone",
+				idPrefix: "site-trial"
+			}, siteTrial?.ends_at ?? "none"), siteTrial && /* @__PURE__ */ jsx("button", {
+				type: "button",
+				className: "btn btn-sm btn-link text-danger px-0 mt-1",
+				onClick: stop,
+				children: "End trial now"
+			})] }) : /* @__PURE__ */ jsx("p", {
+				className: "small text-muted mb-0",
+				children: "Only super admins can start or end it."
+			})
+		]
+	});
+}
+function UsersIndex({ users, filters, roles, siteTrial, trialLimits, canManageSiteTrial, seo }) {
 	const [form, setForm] = useState({
 		search: filters.search ?? "",
 		role: filters.role ?? "",
@@ -3059,6 +3501,11 @@ function UsersIndex({ users, filters, roles, seo }) {
 		subtitle: `${users.total.toLocaleString()} account${users.total === 1 ? "" : "s"}`,
 		seo,
 		children: [
+			/* @__PURE__ */ jsx(SiteTrialCard, {
+				siteTrial,
+				trialLimits,
+				canManage: canManageSiteTrial
+			}),
 			/* @__PURE__ */ jsx("form", {
 				className: "rt-card p-3 mb-3",
 				onSubmit: (event) => {
@@ -3242,7 +3689,7 @@ function UsersIndex({ users, filters, roles, seo }) {
 							}),
 							/* @__PURE__ */ jsx("td", { children: /* @__PURE__ */ jsx(PlanBadge, {
 								plan: user.plan,
-								complimentary: user.complimentary_pro
+								source: user.plan_source
 							}) }),
 							/* @__PURE__ */ jsx("td", {
 								className: "text-center",
@@ -3254,7 +3701,7 @@ function UsersIndex({ users, filters, roles, seo }) {
 							}),
 							/* @__PURE__ */ jsx("td", {
 								className: "small text-muted text-nowrap",
-								children: formatDate$6(user.created_at)
+								children: formatDate$7(user.created_at)
 							}),
 							/* @__PURE__ */ jsx("td", {
 								className: "text-end",
@@ -3393,8 +3840,7 @@ function EditUserForm({ user, roles, permissions }) {
 		})]
 	});
 }
-function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedResumes, tailoredResumes, permissions, roles, proMonths, seo }) {
-	const [months, setMonths] = useState(proMonths.find((value) => value > 0) ?? 1);
+function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedResumes, tailoredResumes, permissions, roles, trialLimits, seo }) {
 	const canManage = permissions.manage && !permissions.is_self;
 	const post = (method, url, data = {}, confirmMessage = null) => {
 		if (confirmMessage && !window.confirm(confirmMessage)) return;
@@ -3402,7 +3848,7 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 	};
 	return /* @__PURE__ */ jsxs(AdminLayout, {
 		title: user.name,
-		subtitle: `${user.email} · joined ${formatDate$6(user.created_at)}`,
+		subtitle: `${user.email} · joined ${formatDate$7(user.created_at)}`,
 		seo,
 		actions: /* @__PURE__ */ jsxs(Fragment, { children: [
 			/* @__PURE__ */ jsxs(Link, {
@@ -3434,7 +3880,7 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 				children: [
 					/* @__PURE__ */ jsx(PlanBadge, {
 						plan: billing.plan,
-						complimentary: user.complimentary_pro
+						source: billing.source
 					}),
 					/* @__PURE__ */ jsx("span", {
 						className: "badge text-bg-light border",
@@ -3462,9 +3908,9 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 						children: /* @__PURE__ */ jsx(StatCard, {
 							icon: "bi-file-earmark-check",
 							tone: "green",
-							label: "Tailored this month",
+							label: billing.limit_covers_trial ? "Tailored in trial" : "Tailored this month",
 							value: billing.limit > 0 ? `${billing.used} / ${billing.limit}` : formatNumber(billing.used),
-							hint: `Resets ${formatDate$6(billing.resets_at)}`
+							hint: `${billing.limit_covers_trial ? "Trial ends" : "Resets"} ${formatDate$7(billing.resets_at)}`
 						})
 					}),
 					/* @__PURE__ */ jsx("div", {
@@ -3532,16 +3978,38 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 									}),
 									/* @__PURE__ */ jsx("dd", {
 										className: "col-7",
-										children: subscription ? `${subscription.status}${subscription.ends_at ? `, ends ${formatDate$6(subscription.ends_at)}` : ""}` : "None"
+										children: subscription ? `${subscription.status}${subscription.ends_at ? `, ends ${formatDate$7(subscription.ends_at)}` : ""}` : "None"
 									}),
 									/* @__PURE__ */ jsx("dt", {
 										className: "col-5 text-muted fw-normal",
-										children: "Gifted Pro"
+										children: "Paid Pro (PKR)"
+									}),
+									/* @__PURE__ */ jsxs("dd", {
+										className: "col-7",
+										children: [
+											user.pro_paid_until && new Date(user.pro_paid_until) > /* @__PURE__ */ new Date() ? `Until ${formatDate$7(user.pro_paid_until)}` : "None",
+											" · ",
+											/* @__PURE__ */ jsx(Link, {
+												href: `/admin/payments?search=${encodeURIComponent(user.email)}`,
+												children: "Payments"
+											})
+										]
+									}),
+									/* @__PURE__ */ jsx("dt", {
+										className: "col-5 text-muted fw-normal",
+										children: "Pro trial"
 									}),
 									/* @__PURE__ */ jsx("dd", {
 										className: "col-7",
-										children: user.complimentary_pro ? `Until ${formatDate$6(user.pro_until)}` : "None"
+										children: user.complimentary_pro ? `${formatDate$7(user.pro_started_at)} – ${formatDate$7(user.pro_until)} · ${describeTrialLimit(user.pro_tailor_limit)}` : "None"
 									}),
+									billing.source === "trial" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("dt", {
+										className: "col-5 text-muted fw-normal",
+										children: "Trial for everyone"
+									}), /* @__PURE__ */ jsxs("dd", {
+										className: "col-7",
+										children: ["Until ", formatDate$7(billing.trial_ends_at)]
+									})] }),
 									/* @__PURE__ */ jsx("dt", {
 										className: "col-5 text-muted fw-normal",
 										children: "Stripe customer"
@@ -3552,40 +4020,20 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 									})
 								]
 							}),
-							permissions.manage && /* @__PURE__ */ jsxs("div", {
-								className: "d-flex flex-wrap gap-2 align-items-center",
-								children: [
-									/* @__PURE__ */ jsx("select", {
-										className: "form-select form-select-sm w-auto",
-										value: months,
-										onChange: (event) => setMonths(Number(event.target.value)),
-										"aria-label": "Months of Pro",
-										children: proMonths.filter((value) => value > 0).map((value) => /* @__PURE__ */ jsxs("option", {
-											value,
-											children: [
-												value,
-												" month",
-												value === 1 ? "" : "s"
-											]
-										}, value))
-									}),
-									/* @__PURE__ */ jsxs("button", {
-										type: "button",
-										className: "btn btn-sm rt-btn-primary px-3 py-1",
-										onClick: () => post("post", `/admin/users/${user.id}/pro`, { months }),
-										children: [/* @__PURE__ */ jsx("i", { className: "bi bi-gift me-1" }), "Give Pro"]
-									}),
-									user.complimentary_pro && /* @__PURE__ */ jsx("button", {
-										type: "button",
-										className: "btn btn-sm btn-link text-danger",
-										onClick: () => post("post", `/admin/users/${user.id}/pro`, { months: 0 }, "Remove the gifted Pro?"),
-										children: "Remove gift"
-									})
-								]
-							}),
+							permissions.manage && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(ProTrialForm, {
+								url: `/admin/users/${user.id}/pro`,
+								limits: trialLimits,
+								submitLabel: user.complimentary_pro ? "Replace Pro trial" : "Give Pro trial",
+								idPrefix: "user-trial"
+							}, user.pro_until ?? "none"), user.complimentary_pro && /* @__PURE__ */ jsx("button", {
+								type: "button",
+								className: "btn btn-sm btn-link text-danger px-0 mt-1",
+								onClick: () => post("post", `/admin/users/${user.id}/pro`, { days: 0 }, "Remove this Pro trial?"),
+								children: "Remove Pro trial"
+							})] }),
 							/* @__PURE__ */ jsx("p", {
 								className: "small text-muted mt-3 mb-0",
-								children: "Gifted Pro needs no payment and does not touch Stripe. Paid subscriptions are managed in the Stripe dashboard."
+								children: "A Pro trial needs no payment and does not touch Stripe. Giving a new trial restarts its CV count. Paid subscriptions are managed in the Stripe dashboard."
 							})
 						]
 					})
@@ -3632,7 +4080,7 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 							}) }),
 							/* @__PURE__ */ jsx("td", {
 								className: "small text-muted text-nowrap",
-								children: formatDate$6(resume.created_at, true)
+								children: formatDate$7(resume.created_at, true)
 							}),
 							/* @__PURE__ */ jsxs("td", {
 								className: "text-end text-nowrap",
@@ -3681,7 +4129,7 @@ function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedR
 										children: [
 											formatNumber(resume.characters),
 											" characters · ",
-											formatDate$6(resume.created_at)
+											formatDate$7(resume.created_at)
 										]
 									})
 								] }), permissions.manage && /* @__PURE__ */ jsx("button", {
@@ -4694,6 +5142,285 @@ function VerifyEmail({ status }) {
 				})
 			})
 		]
+	});
+}
+//#endregion
+//#region resources/js/Pages/Billing/Payment.jsx
+var Payment_exports = /* @__PURE__ */ __exportAll({ default: () => Payment });
+var formatDate$6 = (value) => value ? new Date(value).toLocaleDateString(void 0, {
+	day: "numeric",
+	month: "long",
+	year: "numeric"
+}) : null;
+var STATUS_BADGES = {
+	pending: "text-bg-light border",
+	awaiting_review: "text-bg-warning",
+	paid: "text-bg-success",
+	failed: "text-bg-danger",
+	rejected: "text-bg-danger"
+};
+function CopyRow({ label, value }) {
+	const [isCopied, setIsCopied] = useState(false);
+	if (!value) return null;
+	const copy = () => {
+		navigator.clipboard?.writeText(value).then(() => {
+			setIsCopied(true);
+			setTimeout(() => setIsCopied(false), 1500);
+		});
+	};
+	return /* @__PURE__ */ jsxs("div", {
+		className: "d-flex justify-content-between align-items-center gap-2 py-2 border-bottom",
+		children: [/* @__PURE__ */ jsxs("div", {
+			className: "min-w-0",
+			children: [/* @__PURE__ */ jsx("div", {
+				className: "small text-muted",
+				children: label
+			}), /* @__PURE__ */ jsx("div", {
+				className: "fw-semibold text-break",
+				children: value
+			})]
+		}), /* @__PURE__ */ jsx("button", {
+			type: "button",
+			className: "btn btn-sm btn-light border flex-shrink-0",
+			onClick: copy,
+			"aria-label": `Copy ${label}`,
+			children: /* @__PURE__ */ jsx("i", { className: `bi ${isCopied ? "bi-check2" : "bi-copy"}` })
+		})]
+	});
+}
+function BankTransferForm({ payment, bank }) {
+	const form = useForm({
+		payer_reference: "",
+		proof: null
+	});
+	const submit = (event) => {
+		event.preventDefault();
+		form.post(`/billing/payments/${payment.id}/proof`, {
+			preserveScroll: true,
+			forceFormData: true
+		});
+	};
+	return /* @__PURE__ */ jsxs(Fragment, { children: [
+		/* @__PURE__ */ jsxs("p", {
+			className: "mb-3",
+			children: [
+				"Send ",
+				/* @__PURE__ */ jsx("strong", { children: payment.amount_label }),
+				" to this account from your bank app, JazzCash, Easypaisa or Raast, then tell us the transaction reference."
+			]
+		}),
+		/* @__PURE__ */ jsxs("div", {
+			className: "mb-4",
+			children: [
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "Bank",
+					value: bank.bank_name
+				}),
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "Account title",
+					value: bank.account_title
+				}),
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "Account number",
+					value: bank.account_number
+				}),
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "IBAN",
+					value: bank.iban
+				}),
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "Amount",
+					value: String(payment.amount)
+				}),
+				/* @__PURE__ */ jsx(CopyRow, {
+					label: "Write this in the transfer note",
+					value: payment.reference
+				})
+			]
+		}),
+		bank.instructions && /* @__PURE__ */ jsx("div", {
+			className: "alert alert-light border small",
+			style: { whiteSpace: "pre-line" },
+			children: bank.instructions
+		}),
+		/* @__PURE__ */ jsxs("form", {
+			onSubmit: submit,
+			noValidate: true,
+			children: [
+				/* @__PURE__ */ jsxs("div", {
+					className: "mb-3",
+					children: [
+						/* @__PURE__ */ jsx("label", {
+							htmlFor: "payer_reference",
+							className: "form-label fw-semibold",
+							children: "Transaction reference (TID)"
+						}),
+						/* @__PURE__ */ jsx("input", {
+							id: "payer_reference",
+							className: `form-control ${form.errors.payer_reference ? "is-invalid" : ""}`,
+							value: form.data.payer_reference,
+							onChange: (event) => form.setData("payer_reference", event.target.value),
+							placeholder: "From your bank's receipt",
+							autoComplete: "off"
+						}),
+						form.errors.payer_reference && /* @__PURE__ */ jsx("div", {
+							className: "invalid-feedback",
+							children: form.errors.payer_reference
+						})
+					]
+				}),
+				/* @__PURE__ */ jsxs("div", {
+					className: "mb-3",
+					children: [
+						/* @__PURE__ */ jsxs("label", {
+							htmlFor: "proof",
+							className: "form-label fw-semibold",
+							children: ["Receipt screenshot ", /* @__PURE__ */ jsx("span", {
+								className: "text-muted fw-normal",
+								children: "(optional, speeds up checking)"
+							})]
+						}),
+						/* @__PURE__ */ jsx("input", {
+							id: "proof",
+							type: "file",
+							accept: "image/jpeg,image/png,image/webp,application/pdf",
+							className: `form-control ${form.errors.proof ? "is-invalid" : ""}`,
+							onChange: (event) => form.setData("proof", event.target.files[0] ?? null)
+						}),
+						form.errors.proof ? /* @__PURE__ */ jsx("div", {
+							className: "invalid-feedback",
+							children: form.errors.proof
+						}) : /* @__PURE__ */ jsx("div", {
+							className: "form-text",
+							children: "JPG, PNG, WebP or PDF, up to 5 MB."
+						})
+					]
+				}),
+				/* @__PURE__ */ jsx("button", {
+					type: "submit",
+					className: "btn rt-btn-primary px-4",
+					disabled: form.processing,
+					children: form.processing ? "Sending..." : "I have paid"
+				})
+			]
+		})
+	] });
+}
+function Payment({ payment, bank, proUntil, seo }) {
+	const [isChecking, setIsChecking] = useState(false);
+	const period = payment.interval === "yearly" ? "1 year" : "1 month";
+	const checkAgain = () => {
+		setIsChecking(true);
+		router.post(`/billing/payments/${payment.id}/refresh`, {}, {
+			preserveScroll: true,
+			onFinish: () => setIsChecking(false)
+		});
+	};
+	return /* @__PURE__ */ jsxs(MainLayout, {
+		seo,
+		children: [/* @__PURE__ */ jsx(NavBar, {}), /* @__PURE__ */ jsxs("div", {
+			className: "container py-5",
+			style: { maxWidth: "40rem" },
+			children: [/* @__PURE__ */ jsxs("section", {
+				className: "rt-card p-4",
+				children: [
+					/* @__PURE__ */ jsxs("div", {
+						className: "d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3",
+						children: [/* @__PURE__ */ jsxs("div", { children: [/* @__PURE__ */ jsxs("h1", {
+							className: "h4 fw-bold mb-1",
+							children: ["Pro for ", period]
+						}), /* @__PURE__ */ jsxs("div", {
+							className: "small text-muted",
+							children: [
+								payment.amount_label,
+								" · ",
+								payment.channel_label,
+								" · Ref ",
+								payment.reference
+							]
+						})] }), /* @__PURE__ */ jsx("span", {
+							className: `badge ${STATUS_BADGES[payment.status] ?? "text-bg-light"}`,
+							children: payment.status_label
+						})]
+					}),
+					payment.status === "paid" && /* @__PURE__ */ jsxs("div", {
+						className: "alert alert-success mb-0",
+						children: [
+							/* @__PURE__ */ jsx("i", { className: "bi bi-patch-check-fill me-2" }),
+							/* @__PURE__ */ jsx("strong", { children: "Payment received." }),
+							" Pro is active",
+							proUntil ? ` until ${formatDate$6(proUntil)}` : "",
+							". ",
+							/* @__PURE__ */ jsx(Link, {
+								href: "/",
+								children: "Tailor a CV now"
+							}),
+							"."
+						]
+					}),
+					payment.status === "pending" && payment.channel === "bank_transfer" && bank && /* @__PURE__ */ jsx(BankTransferForm, {
+						payment,
+						bank
+					}),
+					payment.status === "pending" && payment.channel !== "bank_transfer" && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsxs("p", { children: [
+						"We are waiting for ",
+						payment.channel_label,
+						" to confirm this payment. If you paid with a voucher, pay it at any ",
+						payment.channel_label,
+						" shop before it expires; Pro switches on once it is paid."
+					] }), /* @__PURE__ */ jsxs("div", {
+						className: "d-flex flex-wrap gap-2",
+						children: [payment.channel === "easypaisa" && /* @__PURE__ */ jsx("button", {
+							type: "button",
+							className: "btn rt-btn-primary",
+							onClick: checkAgain,
+							disabled: isChecking,
+							children: isChecking ? "Checking..." : "Check again"
+						}), /* @__PURE__ */ jsx(Link, {
+							href: "/pricing",
+							className: "btn rt-btn-soft",
+							children: "Pay another way"
+						})]
+					})] }),
+					payment.status === "awaiting_review" && /* @__PURE__ */ jsxs("div", {
+						className: "alert alert-info mb-0",
+						children: [
+							/* @__PURE__ */ jsx("i", { className: "bi bi-hourglass-split me-2" }),
+							"Thanks! We received your transfer details (reference ",
+							payment.payer_reference,
+							") and are checking them. Pro switches on as soon as it is approved, usually within a few hours."
+						]
+					}),
+					["failed", "rejected"].includes(payment.status) && /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsxs("div", {
+						className: "alert alert-danger",
+						children: [payment.status === "failed" ? `${payment.channel_label} did not complete this payment. You have not been charged for it.` : "We could not match this transfer to a payment in our account.", payment.admin_note && /* @__PURE__ */ jsxs("div", {
+							className: "mt-1",
+							children: [
+								/* @__PURE__ */ jsx("strong", { children: "Note:" }),
+								" ",
+								payment.admin_note
+							]
+						})]
+					}), /* @__PURE__ */ jsx(Link, {
+						href: "/pricing",
+						className: "btn rt-btn-primary",
+						children: "Try again"
+					})] })
+				]
+			}), /* @__PURE__ */ jsxs("p", {
+				className: "small text-muted text-center mt-3",
+				children: [
+					"Questions about a payment? ",
+					/* @__PURE__ */ jsx(Link, {
+						href: "/contact",
+						children: "Contact us"
+					}),
+					" with reference ",
+					payment.reference,
+					"."
+				]
+			})]
+		})]
 	});
 }
 //#endregion
@@ -6282,10 +7009,21 @@ function UsageMeter({ billing }) {
 		className: "rt-usage d-flex align-items-center gap-2 small mt-3",
 		children: [/* @__PURE__ */ jsxs("span", {
 			className: "rt-plan-pill",
-			children: [/* @__PURE__ */ jsx("i", { className: "bi bi-stars" }), "Pro"]
+			children: [
+				/* @__PURE__ */ jsx("i", { className: "bi bi-stars" }),
+				"Pro",
+				billing.trial_ends_at ? " trial" : ""
+			]
 		}), /* @__PURE__ */ jsxs("span", {
 			className: "text-muted",
-			children: [billing.remaining === null ? "Unlimited tailored CVs" : `${billing.remaining} tailored CVs left this month`, " · all designs unlocked"]
+			children: [
+				billing.remaining === null ? "Unlimited tailored CVs" : `${billing.remaining} tailored CV${billing.remaining === 1 ? "" : "s"} left ${billing.limit_covers_trial ? "in your trial" : "this month"}`,
+				" · all designs unlocked",
+				billing.trial_ends_at && ` · trial ends ${new Date(billing.trial_ends_at).toLocaleDateString(void 0, {
+					day: "numeric",
+					month: "short"
+				})}`
+			]
 		})]
 	});
 	const used = Math.min(billing.used, billing.limit);
@@ -7245,26 +7983,24 @@ function Terms({ updatedAt, contactEmail, seo }) {
 //#endregion
 //#region resources/js/Pages/Pricing.jsx
 var Pricing_exports = /* @__PURE__ */ __exportAll({ default: () => Pricing });
-var formatDate$2 = (value) => value ? (/* @__PURE__ */ new Date(`${value}T00:00:00`)).toLocaleDateString(void 0, {
+var formatDate$2 = (value) => value ? new Date(String(value).includes("T") ? value : `${value}T00:00:00`).toLocaleDateString(void 0, {
 	day: "numeric",
 	month: "long",
 	year: "numeric"
 }) : null;
-/**
-* "$79" a year shown as "$6.58" a month. Prices are display strings from config, so the currency
-* symbol is whatever precedes the number.
-*/
-var perMonth = (amount) => {
-	const value = parseFloat(String(amount).replace(/[^0-9.]/g, ""));
-	const symbol = String(amount).replace(/[0-9.,\s]/g, "");
-	return Number.isFinite(value) && value > 0 ? `${symbol}${(value / 12).toFixed(2)}` : null;
+var METHOD_ICONS = {
+	jazzcash: "bi-phone",
+	easypaisa: "bi-wallet2",
+	bank_transfer: "bi-bank",
+	card: "bi-credit-card"
 };
 var FAQS = [
 	["Is checking my ATS score really free?", "Yes. Scanning your CV against a job description is unlimited on every plan. Only creating a tailored CV counts towards your monthly quota."],
 	["What counts as one tailored CV?", "Each time we rewrite your CV for a job. Confirming extra skills on that CV or switching between the designs you have access to does not count again."],
 	["When does my free CV reset?", "On the first day of every month."],
-	["Can I cancel Pro any time?", "Yes. Cancel from the billing page in one click. You keep Pro until the end of the period you paid for, then move back to Free."],
-	["How do payments work?", "Payments are processed securely by Stripe. We never see or store your card details. Promo codes can be entered at checkout."]
+	["How can I pay?", "In Pakistani rupees with JazzCash or Easypaisa (mobile account, card or voucher), or by bank transfer. We never see or store your card or wallet details."],
+	["Does Pro renew automatically?", "No. A JazzCash, Easypaisa or bank payment buys one month or one year of Pro. Pay again any time to add more time; it is added after the time you already have."],
+	["How long does a bank transfer take?", "Send the amount, then enter your transaction reference (and a screenshot if you like). We check it and switch on Pro, usually within a few hours."]
 ];
 function Feature({ children, included = true }) {
 	return /* @__PURE__ */ jsxs("li", {
@@ -7286,7 +8022,7 @@ function Cell({ value }) {
 		children: value
 	});
 }
-function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStatus, seo }) {
+function Pricing({ prices, channels = [], paidUntil = null, openPayment = null, limits, subscription, hasBillingAccount, checkoutStatus, paymentStatus = null, seo }) {
 	const { auth, billing, errors } = usePage().props;
 	const user = auth?.user;
 	const isPro = billing?.plan === "pro";
@@ -7294,9 +8030,22 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 	const [isRedirecting, setIsRedirecting] = useState(false);
 	const price = prices.find((option) => option.interval === interval) ?? prices[0];
 	const yearly = prices.find((option) => option.interval === "yearly");
+	const methods = [...channels, ...price.stripe ? [{
+		value: "card",
+		label: "Card (auto-renews)"
+	}] : []];
+	const [method, setMethod] = useState(channels[0]?.value ?? "card");
+	const chosen = methods.find((option) => option.value === method) ?? methods[0];
+	const canPay = user && (!isPro || [
+		"paid",
+		"gift",
+		"trial"
+	].includes(billing?.source));
 	const startCheckout = () => {
+		if (!chosen) return;
 		setIsRedirecting(true);
-		router.post(`/billing/checkout/${price.interval}`, {}, { onFinish: () => setIsRedirecting(false) });
+		const url = chosen.value === "card" ? `/billing/checkout/${price.interval}` : `/billing/pay/${chosen.value}/${price.interval}`;
+		router.post(url, {}, { onFinish: () => setIsRedirecting(false) });
 	};
 	const freeLimit = `${limits.free_monthly_tailors} tailored CV${limits.free_monthly_tailors === 1 ? "" : "s"} a month`;
 	const proLimit = limits.pro_monthly_tailors > 0 ? `Up to ${limits.pro_monthly_tailors} a month` : "Unlimited";
@@ -7402,6 +8151,24 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 							role: "alert",
 							children: errors.billing
 						}),
+						paymentStatus === "invalid" && /* @__PURE__ */ jsx("div", {
+							className: "alert alert-warning shadow-sm py-2",
+							role: "alert",
+							children: "We could not confirm that payment. If money left your account, contact us with the time of the payment and we will sort it out."
+						}),
+						openPayment && /* @__PURE__ */ jsxs("div", {
+							className: "alert alert-info shadow-sm py-2",
+							role: "status",
+							children: [
+								/* @__PURE__ */ jsx("i", { className: "bi bi-hourglass-split me-2" }),
+								"We are checking your bank transfer ",
+								/* @__PURE__ */ jsx(Link, {
+									href: `/billing/payments/${openPayment.id}`,
+									children: openPayment.reference
+								}),
+								". Pro switches on as soon as it is approved."
+							]
+						}),
 						/* @__PURE__ */ jsxs("div", {
 							className: "row g-4 align-items-stretch",
 							children: [/* @__PURE__ */ jsx("div", {
@@ -7433,7 +8200,7 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 											className: "mb-4",
 											children: [/* @__PURE__ */ jsx("span", {
 												className: "rt-plan-price",
-												children: "$0"
+												children: "Rs 0"
 											}), /* @__PURE__ */ jsx("span", {
 												className: "rt-plan-period",
 												children: " / forever"
@@ -7491,10 +8258,10 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 										}),
 										/* @__PURE__ */ jsx("div", {
 											className: "mb-4",
-											children: price.interval === "yearly" && perMonth(price.amount) ? /* @__PURE__ */ jsxs(Fragment, { children: [
+											children: price.interval === "yearly" && price.monthly_equivalent_label ? /* @__PURE__ */ jsxs(Fragment, { children: [
 												/* @__PURE__ */ jsx("span", {
 													className: "rt-plan-price",
-													children: perMonth(price.amount)
+													children: price.monthly_equivalent_label
 												}),
 												/* @__PURE__ */ jsx("span", {
 													className: "rt-plan-period",
@@ -7502,12 +8269,12 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 												}),
 												/* @__PURE__ */ jsxs("div", {
 													className: "small text-muted mt-1",
-													children: [price.amount, " billed once a year"]
+													children: [price.amount_label, " paid once for a year"]
 												})
 											] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
 												/* @__PURE__ */ jsx("span", {
 													className: "rt-plan-price",
-													children: price.amount
+													children: price.amount_label
 												}),
 												/* @__PURE__ */ jsxs("span", {
 													className: "rt-plan-period",
@@ -7517,7 +8284,7 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 													className: "small text-muted mt-1",
 													children: [
 														"or ",
-														yearly.amount,
+														yearly.amount_label,
 														" a year (",
 														yearly.note.toLowerCase(),
 														")"
@@ -7536,26 +8303,26 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 												] }) : /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("strong", { children: "Unlimited" }), " tailored CVs"] }) }),
 												/* @__PURE__ */ jsx(Feature, { children: "All 15 ATS-safe designs" }),
 												/* @__PURE__ */ jsx(Feature, { children: "Tailor a CV for every application" }),
-												/* @__PURE__ */ jsx(Feature, { children: "Cancel any time" })
+												/* @__PURE__ */ jsx(Feature, { children: "No auto-renewal with JazzCash, Easypaisa or bank" })
 											]
 										}),
-										isPro ? /* @__PURE__ */ jsxs(Fragment, { children: [subscription?.on_grace_period && subscription.ends_at && /* @__PURE__ */ jsxs("div", {
-											className: "alert alert-warning py-2 small mb-2",
+										isPro && paidUntil && /* @__PURE__ */ jsxs("div", {
+											className: "alert alert-success py-2 small mb-2",
 											children: [
-												"Cancelled. Pro stays active until ",
-												formatDate$2(subscription.ends_at),
-												"."
+												"Pro is paid until ",
+												formatDate$2(paidUntil),
+												". Pay again to add more time."
 											]
-										}), hasBillingAccount ? /* @__PURE__ */ jsxs("a", {
-											href: "/billing/portal",
-											className: "btn rt-btn-primary w-100",
-											children: [/* @__PURE__ */ jsx("i", { className: "bi bi-credit-card me-2" }), "Manage billing"]
-										}) : /* @__PURE__ */ jsx("button", {
-											type: "button",
-											className: "btn rt-btn-primary w-100",
-											disabled: true,
-											children: "Pro is active"
-										})] }) : !user ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(Link, {
+										}),
+										isPro && billing?.trial_ends_at && /* @__PURE__ */ jsxs("div", {
+											className: "alert alert-info py-2 small mb-2",
+											children: [
+												"Your Pro trial ends on ",
+												formatDate$2(billing.trial_ends_at),
+												". Pay now to keep Pro after it."
+											]
+										}),
+										!user ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx(Link, {
 											href: "/register",
 											className: "btn rt-btn-primary w-100",
 											children: "Get Pro"
@@ -7565,18 +8332,68 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 												href: "/login",
 												children: "Log in"
 											})]
-										})] }) : /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("button", {
+										})] }) : canPay ? /* @__PURE__ */ jsxs(Fragment, { children: [
+											methods.length > 0 && /* @__PURE__ */ jsxs("fieldset", {
+												className: "mb-3",
+												children: [/* @__PURE__ */ jsx("legend", {
+													className: "small fw-semibold mb-2",
+													children: "Pay with"
+												}), /* @__PURE__ */ jsx("div", {
+													className: "d-grid gap-2",
+													children: methods.map((option) => /* @__PURE__ */ jsxs("label", {
+														className: `rt-pay-method ${chosen?.value === option.value ? "is-active" : ""}`,
+														children: [
+															/* @__PURE__ */ jsx("input", {
+																type: "radio",
+																name: "method",
+																className: "form-check-input me-2",
+																value: option.value,
+																checked: chosen?.value === option.value,
+																onChange: () => setMethod(option.value)
+															}),
+															/* @__PURE__ */ jsx("i", { className: `bi ${METHOD_ICONS[option.value] ?? "bi-cash"} me-2` }),
+															option.label
+														]
+													}, option.value))
+												})]
+											}),
+											/* @__PURE__ */ jsx("button", {
+												type: "button",
+												className: "btn rt-btn-primary w-100",
+												onClick: startCheckout,
+												disabled: !chosen || isRedirecting,
+												children: isRedirecting ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("span", {
+													className: "spinner-border spinner-border-sm me-2",
+													"aria-hidden": "true"
+												}), "Opening payment..."] }) : chosen ? /* @__PURE__ */ jsxs(Fragment, { children: [
+													/* @__PURE__ */ jsx("i", { className: "bi bi-lightning-charge-fill me-2" }),
+													isPro ? "Add" : "Pay",
+													" ",
+													price.amount_label,
+													" with ",
+													chosen.value === "card" ? "card" : chosen.label
+												] }) : "Coming soon"
+											}),
+											/* @__PURE__ */ jsxs("small", {
+												className: "text-muted d-block mt-2 text-center",
+												children: [/* @__PURE__ */ jsx("i", { className: "bi bi-lock me-1" }), chosen?.value === "bank_transfer" ? "You will see our bank details on the next page." : chosen?.value === "card" ? "Secure card payment by Stripe. Renews until you cancel." : chosen ? `You pay on ${chosen.label}'s secure page.` : "Payments open soon."]
+											})
+										] }) : /* @__PURE__ */ jsxs(Fragment, { children: [subscription?.on_grace_period && subscription.ends_at && /* @__PURE__ */ jsxs("div", {
+											className: "alert alert-warning py-2 small mb-2",
+											children: [
+												"Cancelled. Pro stays active until ",
+												formatDate$2(subscription.ends_at),
+												"."
+											]
+										}), hasBillingAccount && subscription ? /* @__PURE__ */ jsxs("a", {
+											href: "/billing/portal",
+											className: "btn rt-btn-primary w-100",
+											children: [/* @__PURE__ */ jsx("i", { className: "bi bi-credit-card me-2" }), "Manage billing"]
+										}) : /* @__PURE__ */ jsx("button", {
 											type: "button",
 											className: "btn rt-btn-primary w-100",
-											onClick: startCheckout,
-											disabled: !price.available || isRedirecting,
-											children: isRedirecting ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("span", {
-												className: "spinner-border spinner-border-sm me-2",
-												"aria-hidden": "true"
-											}), "Opening secure checkout..."] }) : price.available ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-lightning-charge-fill me-2" }), "Upgrade to Pro"] }) : "Coming soon"
-										}), /* @__PURE__ */ jsxs("small", {
-											className: "text-muted d-block mt-2 text-center",
-											children: [/* @__PURE__ */ jsx("i", { className: "bi bi-lock me-1" }), "Secure payment by Stripe. Promo codes accepted."]
+											disabled: true,
+											children: "Pro is active"
 										})] })
 									]
 								})
@@ -7585,8 +8402,8 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 						/* @__PURE__ */ jsxs("div", {
 							className: "rt-trust my-4 my-lg-5",
 							children: [
-								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-shield-check" }), "Payments by Stripe"] }),
-								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-arrow-counterclockwise" }), "Cancel any time"] }),
+								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-shield-check" }), "JazzCash · Easypaisa · Bank transfer"] }),
+								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-arrow-counterclockwise" }), "No auto-renewal"] }),
 								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-speedometer2" }), "Free ATS checks forever"] }),
 								/* @__PURE__ */ jsxs("span", { children: [/* @__PURE__ */ jsx("i", { className: "bi bi-file-earmark-check" }), "ATS-safe PDFs only"] })
 							]
@@ -7652,7 +8469,7 @@ function Pricing({ prices, limits, subscription, hasBillingAccount, checkoutStat
 //#endregion
 //#region resources/js/Pages/Profile/Edit.jsx
 var Edit_exports = /* @__PURE__ */ __exportAll({ default: () => Edit });
-var formatDate$1 = (value) => value ? (/* @__PURE__ */ new Date(`${value}T00:00:00`)).toLocaleDateString(void 0, {
+var formatDate$1 = (value) => value ? new Date(String(value).includes("T") ? value : `${value}T00:00:00`).toLocaleDateString(void 0, {
 	day: "numeric",
 	month: "long",
 	year: "numeric"
@@ -7660,10 +8477,13 @@ var formatDate$1 = (value) => value ? (/* @__PURE__ */ new Date(`${value}T00:00:
 /**
 * The account's plan, this month's usage and the way to upgrade or manage billing.
 */
-function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt }) {
+function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt, payments }) {
 	if (!billing) return null;
 	const isPro = billing.plan === "pro";
 	const used = billing.limit > 0 ? Math.min(billing.used, billing.limit) : billing.used;
+	const isTrial = isPro && Boolean(billing.trial_ends_at);
+	const isPaidOnce = isPro && Boolean(billing.paid_until);
+	const period = billing.limit_covers_trial ? "in your trial" : "this month";
 	return /* @__PURE__ */ jsxs("section", {
 		className: `rt-usage mb-4 ${!isPro && billing.remaining === 0 ? "is-empty" : ""}`,
 		children: [
@@ -7674,7 +8494,11 @@ function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt }) {
 					children: "Plan & billing"
 				}), isPro ? /* @__PURE__ */ jsxs("span", {
 					className: "rt-plan-pill",
-					children: [/* @__PURE__ */ jsx("i", { className: "bi bi-stars" }), "Pro"]
+					children: [
+						/* @__PURE__ */ jsx("i", { className: "bi bi-stars" }),
+						"Pro",
+						isTrial ? " trial" : ""
+					]
 				}) : /* @__PURE__ */ jsx("span", {
 					className: "badge text-bg-light border",
 					children: "Free"
@@ -7682,7 +8506,7 @@ function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt }) {
 			}),
 			billing.limit > 0 ? /* @__PURE__ */ jsxs(Fragment, { children: [/* @__PURE__ */ jsxs("div", {
 				className: "d-flex justify-content-between small mb-1",
-				children: [/* @__PURE__ */ jsx("span", { children: "Tailored CVs this month" }), /* @__PURE__ */ jsxs("span", {
+				children: [/* @__PURE__ */ jsxs("span", { children: ["Tailored CVs ", period] }), /* @__PURE__ */ jsxs("span", {
 					className: "fw-semibold",
 					children: [
 						used,
@@ -7696,23 +8520,28 @@ function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt }) {
 				"aria-valuemin": 0,
 				"aria-valuemax": billing.limit,
 				"aria-valuenow": used,
-				"aria-label": "Tailored CVs used this month",
+				"aria-label": `Tailored CVs used ${period}`,
 				children: /* @__PURE__ */ jsx("span", { style: { width: `${used / billing.limit * 100}%` } })
 			})] }) : /* @__PURE__ */ jsxs("p", {
 				className: "small mb-2",
 				children: [
 					"Unlimited tailored CVs · ",
 					billing.used,
-					" this month"
+					" ",
+					period
 				]
 			}),
 			/* @__PURE__ */ jsx("p", {
 				className: "small text-muted mb-3",
-				children: subscriptionEndsAt ? `Your Pro subscription is cancelled and ends on ${formatDate$1(subscriptionEndsAt)}.` : `Usage resets on ${formatDate$1(billing.resets_at)}. ATS score checks are always free.`
+				children: subscriptionEndsAt ? `Your Pro subscription is cancelled and ends on ${formatDate$1(subscriptionEndsAt)}.` : isPaidOnce ? `Pro is paid until ${formatDate$1(billing.paid_until)}. It does not renew by itself; pay again any time to add more time.` : isTrial ? `Your Pro trial ends on ${formatDate$1(billing.trial_ends_at)}. ATS score checks are always free.` : `Usage resets on ${formatDate$1(billing.resets_at)}. ATS score checks are always free.`
 			}),
 			/* @__PURE__ */ jsxs("div", {
 				className: "d-flex flex-wrap gap-2",
-				children: [isPro ? hasBillingAccount && /* @__PURE__ */ jsxs("a", {
+				children: [isPaidOnce ? /* @__PURE__ */ jsxs(Link, {
+					href: "/pricing",
+					className: "btn btn-sm rt-btn-primary px-3 py-1",
+					children: [/* @__PURE__ */ jsx("i", { className: "bi bi-plus-circle me-1" }), "Add more Pro time"]
+				}) : isPro && !isTrial ? hasBillingAccount && /* @__PURE__ */ jsxs("a", {
 					href: "/billing/portal",
 					className: "btn btn-sm rt-btn-soft",
 					children: [/* @__PURE__ */ jsx("i", { className: "bi bi-credit-card me-1" }), "Manage billing & invoices"]
@@ -7725,11 +8554,36 @@ function PlanCard({ billing, hasBillingAccount, subscriptionEndsAt }) {
 					className: "btn btn-sm btn-link text-muted",
 					children: "Billing history"
 				})]
+			}),
+			payments.length > 0 && /* @__PURE__ */ jsxs("div", {
+				className: "mt-3 pt-3 border-top",
+				children: [/* @__PURE__ */ jsx("div", {
+					className: "small fw-semibold mb-2",
+					children: "Your payments"
+				}), /* @__PURE__ */ jsx("ul", {
+					className: "list-unstyled small mb-0 d-grid gap-1",
+					children: payments.map((payment) => /* @__PURE__ */ jsxs("li", {
+						className: "d-flex flex-wrap justify-content-between gap-2",
+						children: [/* @__PURE__ */ jsxs(Link, {
+							href: `/billing/payments/${payment.id}`,
+							children: [
+								payment.amount_label,
+								" · ",
+								payment.channel_label,
+								" · ",
+								payment.interval === "yearly" ? "1 year" : "1 month"
+							]
+						}), /* @__PURE__ */ jsx("span", {
+							className: `badge ${payment.status === "paid" ? "text-bg-success" : payment.status === "awaiting_review" ? "text-bg-warning" : payment.status === "pending" ? "text-bg-light border" : "text-bg-danger"}`,
+							children: payment.status_label
+						})]
+					}, payment.id))
+				})]
 			})
 		]
 	});
 }
-function Edit({ mustVerifyEmail, status, hasBillingAccount = false, subscriptionEndsAt = null }) {
+function Edit({ mustVerifyEmail, status, hasBillingAccount = false, subscriptionEndsAt = null, payments = [] }) {
 	const { auth, billing } = usePage().props;
 	const user = auth.user;
 	const profileForm = useForm({
@@ -7780,7 +8634,8 @@ function Edit({ mustVerifyEmail, status, hasBillingAccount = false, subscription
 			/* @__PURE__ */ jsx(PlanCard, {
 				billing,
 				hasBillingAccount,
-				subscriptionEndsAt
+				subscriptionEndsAt,
+				payments
 			}),
 			/* @__PURE__ */ jsxs("form", {
 				onSubmit: updateProfile,
@@ -9848,6 +10703,7 @@ createServer((page) => createInertiaApp({
 			"./Pages/Admin/Dashboard.jsx": Dashboard_exports,
 			"./Pages/Admin/JobMetrics.jsx": JobMetrics_exports,
 			"./Pages/Admin/Messages.jsx": Messages_exports,
+			"./Pages/Admin/Payments/Index.jsx": Index_exports$8,
 			"./Pages/Admin/Posts/Form.jsx": Form_exports,
 			"./Pages/Admin/Posts/Index.jsx": Index_exports$7,
 			"./Pages/Admin/Resumes/Index.jsx": Index_exports$6,
@@ -9860,6 +10716,7 @@ createServer((page) => createInertiaApp({
 			"./Pages/Auth/Register.jsx": Register_exports,
 			"./Pages/Auth/ResetPassword.jsx": ResetPassword_exports,
 			"./Pages/Auth/VerifyEmail.jsx": VerifyEmail_exports,
+			"./Pages/Billing/Payment.jsx": Payment_exports,
 			"./Pages/Blog/Index.jsx": Index_exports$4,
 			"./Pages/Blog/Show.jsx": Show_exports$1,
 			"./Pages/Jobs/Index.jsx": Index_exports$3,

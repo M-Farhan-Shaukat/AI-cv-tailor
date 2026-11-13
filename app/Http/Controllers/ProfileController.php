@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ProfileUpdateRequest;
+use App\Models\Payment;
+use App\Services\Payments\LocalPayments;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,6 +26,16 @@ class ProfileController extends Controller
             'status' => session('status'),
             'hasBillingAccount' => $request->user()->hasStripeId(),
             'subscriptionEndsAt' => $request->user()->subscription((string) config('billing.subscription_type', 'default'))?->ends_at?->toDateString(),
+            'payments' => $request->user()->payments()->latest()->limit(10)->get()->map(fn (Payment $payment): array => [
+                'id' => $payment->id,
+                'reference' => $payment->reference,
+                'channel_label' => $payment->channel->label(),
+                'interval' => $payment->interval,
+                'amount_label' => LocalPayments::formatAmount($payment->amount),
+                'status' => $payment->status->value,
+                'status_label' => $payment->status->label(),
+                'created_at' => $payment->created_at?->toIso8601String(),
+            ]),
         ]);
     }
 

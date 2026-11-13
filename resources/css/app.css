@@ -784,6 +784,19 @@ button.rt-chip.is-selected { background: var(--rt-primary); border-color: var(--
     transition: background .15s, color .15s;
 }
 .rt-billing-toggle button.is-active { background: #fff; color: var(--rt-primary-dark); }
+.rt-pay-method {
+    display: flex;
+    align-items: center;
+    padding: .6rem .8rem;
+    border: 1px solid #e5e7eb;
+    border-radius: .75rem;
+    font-weight: 600;
+    font-size: .9rem;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+.rt-pay-method .form-check-input { margin-top: 0; }
+.rt-pay-method.is-active { border-color: var(--rt-primary); background: rgba(79, 70, 229, .06); }
 .rt-save-badge {
     font-size: .7rem;
     font-weight: 700;

@@ -9,6 +9,7 @@ use App\Models\TailoredResume;
 use App\Models\User;
 use App\Models\UserResume;
 use App\Services\LlmUsageTracker;
+use App\Services\ProTrial;
 use App\Services\UsageQuota;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -23,12 +24,7 @@ class UserController extends Controller
 {
     protected const PER_PAGE = 20;
 
-    /**
-     * Months of Pro an admin can give without payment; 0 removes it.
-     */
-    public const COMPLIMENTARY_PRO_MONTHS = [0, 1, 3, 6, 12];
-
-    public function index(Request $request, UsageQuota $quota): Response
+    public function index(Request $request, UsageQuota $quota, ProTrial $proTrial): Response
     {
         $filters = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
@@ -36,6 +32,8 @@ class UserController extends Controller
             'status' => ['nullable', Rule::in(['active', 'suspended', 'unverified'])],
             'plan' => ['nullable', Rule::in([UsageQuota::FREE, UsageQuota::PRO])],
         ]);
+
+        $siteTrial = $proTrial->active();
 
         $users = User::query()
             ->with('subscriptions')
@@ -47,22 +45,32 @@ class UserController extends Controller
             ->when(($filters['status'] ?? null) === 'active', fn (Builder $query) => $query->whereNull('suspended_at'))
             ->when(($filters['status'] ?? null) === 'suspended', fn (Builder $query) => $query->whereNotNull('suspended_at'))
             ->when(($filters['status'] ?? null) === 'unverified', fn (Builder $query) => $query->whereNull('email_verified_at'))
-            ->when(($filters['plan'] ?? null) === UsageQuota::PRO, fn (Builder $query) => $query->where(fn (Builder $query) => $this->wherePro($query)))
-            ->when(($filters['plan'] ?? null) === UsageQuota::FREE, fn (Builder $query) => $query->whereNot(fn (Builder $query) => $this->wherePro($query)))
+            ->when(($filters['plan'] ?? null) === UsageQuota::PRO && $siteTrial === null, fn (Builder $query) => $query->where(fn (Builder $query) => $this->wherePro($query)))
+            ->when(($filters['plan'] ?? null) === UsageQuota::FREE, fn (Builder $query) => $siteTrial === null
+                ? $query->whereNot(fn (Builder $query) => $this->wherePro($query))
+                : $query->whereRaw('1 = 0'))
             ->latest()
             ->paginate(self::PER_PAGE)
             ->withQueryString()
-            ->through(fn (User $user): array => [
-                ...$this->summary($user),
-                'plan' => $quota->isPro($user) ? UsageQuota::PRO : UsageQuota::FREE,
-                'tailored_resumes_count' => $user->tailored_resumes_count,
-                'resumes_count' => $user->resumes_count,
-            ]);
+            ->through(function (User $user) use ($quota): array {
+                $entitlement = $quota->entitlement($user);
+
+                return [
+                    ...$this->summary($user),
+                    'plan' => $entitlement['plan'],
+                    'plan_source' => $entitlement['source'],
+                    'tailored_resumes_count' => $user->tailored_resumes_count,
+                    'resumes_count' => $user->resumes_count,
+                ];
+            });
 
         return Inertia::render('Admin/Users/Index', [
             'users' => $users,
             'filters' => $filters,
             'roles' => UserRole::options(),
+            'siteTrial' => $proTrial->forAdmin(),
+            'trialLimits' => ['max_days' => ProTrial::MAX_DAYS, 'max_tailor_limit' => ProTrial::MAX_TAILOR_LIMIT],
+            'canManageSiteTrial' => $request->user()->can('manage-site-settings'),
             'seo' => ['title' => 'Users'],
         ]);
     }
@@ -75,6 +83,9 @@ class UserController extends Controller
             'user' => [
                 ...$this->summary($user),
                 'pro_until' => $user->pro_until?->toIso8601String(),
+                'pro_started_at' => $user->pro_started_at?->toIso8601String(),
+                'pro_tailor_limit' => $user->pro_tailor_limit,
+                'pro_paid_until' => $user->pro_paid_until?->toIso8601String(),
                 'has_stripe_account' => $user->hasStripeId(),
                 'is_configured_admin' => $user->isConfiguredAdmin(),
             ],
@@ -113,7 +124,7 @@ class UserController extends Controller
                 'is_self' => $request->user()->is($user),
             ],
             'roles' => UserRole::options(),
-            'proMonths' => self::COMPLIMENTARY_PRO_MONTHS,
+            'trialLimits' => ['max_days' => ProTrial::MAX_DAYS, 'max_tailor_limit' => ProTrial::MAX_TAILOR_LIMIT],
             'seo' => ['title' => $user->name.' · Users'],
         ]);
     }
@@ -139,19 +150,35 @@ class UserController extends Controller
     }
 
     /**
-     * Give (or take away) Pro without a Stripe subscription, for support cases and partners.
+     * Give (or take away, with 0 days) a Pro trial without a Stripe subscription, for a number of days
+     * and optionally a cap on the CVs tailored during it. A blank cap keeps the normal Pro limit;
+     * 0 means unlimited. Giving a new trial restarts the count.
      */
     public function complimentaryPro(Request $request, User $user): RedirectResponse
     {
         Gate::authorize('manage-user', $user);
 
-        $months = (int) $request->validate([
-            'months' => ['required', 'integer', Rule::in(self::COMPLIMENTARY_PRO_MONTHS)],
-        ])['months'];
+        $validated = $request->validate([
+            'days' => ['required', 'integer', 'min:0', 'max:'.ProTrial::MAX_DAYS],
+            'tailor_limit' => ['nullable', 'integer', 'min:0', 'max:'.ProTrial::MAX_TAILOR_LIMIT],
+        ]);
+        $days = (int) $validated['days'];
 
-        $user->forceFill(['pro_until' => $months === 0 ? null : now()->addMonths($months)])->save();
+        if ($days === 0) {
+            $user->forceFill(['pro_until' => null, 'pro_started_at' => null, 'pro_tailor_limit' => null])->save();
 
-        return back()->with('status', $months === 0 ? 'Complimentary Pro removed.' : "Pro given for {$months} month".($months === 1 ? '' : 's').'.');
+            return back()->with('status', 'Pro trial removed.');
+        }
+
+        $tailorLimit = isset($validated['tailor_limit']) ? (int) $validated['tailor_limit'] : null;
+
+        $user->forceFill([
+            'pro_started_at' => now(),
+            'pro_until' => now()->addDays($days),
+            'pro_tailor_limit' => $tailorLimit,
+        ])->save();
+
+        return back()->with('status', "Pro trial given for {$days} day".($days === 1 ? '' : 's').' with '.$this->describeLimit($tailorLimit).'.');
     }
 
     public function suspend(Request $request, User $user): RedirectResponse
@@ -219,12 +246,22 @@ class UserController extends Controller
         ];
     }
 
+    protected function describeLimit(?int $tailorLimit): string
+    {
+        return match ($tailorLimit) {
+            null => 'the normal Pro limit',
+            0 => 'unlimited tailoring',
+            default => "{$tailorLimit} tailored CV".($tailorLimit === 1 ? '' : 's'),
+        };
+    }
+
     /**
      * @param  Builder<User>  $query
      */
     protected function wherePro(Builder $query): void
     {
         $query->where('pro_until', '>', now())
+            ->orWhere('pro_paid_until', '>', now())
             ->orWhereIn('role', [UserRole::Admin->value, UserRole::SuperAdmin->value])
             ->orWhereHas('subscriptions', fn (Builder $query) => $query->active());
     }

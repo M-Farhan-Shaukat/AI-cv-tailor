@@ -1,4 +1,4 @@
-import { Link } from '@inertiajs/react';
+import { Link, useForm } from '@inertiajs/react';
 import React from 'react';
 
 /*
@@ -34,10 +34,55 @@ export function StatCard({ label, value, hint, icon, tone = 'indigo' }) {
     );
 }
 
-export function PlanBadge({ plan, complimentary = false }) {
+const PLAN_SOURCE_NOTES = { gift: ' (trial)', trial: ' (trial for all)' };
+
+export function PlanBadge({ plan, source = null }) {
     return plan === 'pro'
-        ? <span className="rt-plan-pill"><i className="bi bi-stars"></i>Pro{complimentary ? ' (gift)' : ''}</span>
+        ? <span className="rt-plan-pill"><i className="bi bi-stars"></i>Pro{PLAN_SOURCE_NOTES[source] ?? ''}</span>
         : <span className="badge text-bg-light border">Free</span>;
+}
+
+export const describeTrialLimit = (tailorLimit) => {
+    if (tailorLimit === null || tailorLimit === undefined) {
+        return 'Normal Pro limit';
+    }
+    return tailorLimit === 0 ? 'Unlimited' : `${formatNumber(tailorLimit)} tailored CV${tailorLimit === 1 ? '' : 's'}`;
+};
+
+/**
+ * Days of Pro plus an optional cap on CVs tailored during the trial. A blank cap keeps the normal
+ * Pro limit; 0 means unlimited.
+ */
+export function ProTrialForm({ url, limits, submitLabel, idPrefix }) {
+    const form = useForm({ days: 7, tailor_limit: '' });
+
+    const submit = (event) => {
+        event.preventDefault();
+        form.transform((data) => ({ days: Number(data.days), tailor_limit: data.tailor_limit === '' ? null : Number(data.tailor_limit) }));
+        form.post(url, { preserveScroll: true });
+    };
+
+    return (
+        <form onSubmit={submit} noValidate>
+            <div className="row g-2 align-items-start">
+                <div className="col-sm-4">
+                    <label htmlFor={`${idPrefix}-days`} className="form-label fw-semibold small mb-1">Days</label>
+                    <input id={`${idPrefix}-days`} type="number" min="1" max={limits.max_days} className={`form-control form-control-sm ${form.errors.days ? 'is-invalid' : ''}`} value={form.data.days} onChange={(event) => form.setData('days', event.target.value)} />
+                    {form.errors.days && <div className="invalid-feedback">{form.errors.days}</div>}
+                </div>
+                <div className="col-sm-8">
+                    <label htmlFor={`${idPrefix}-limit`} className="form-label fw-semibold small mb-1">CV tailoring limit for the trial</label>
+                    <input id={`${idPrefix}-limit`} type="number" min="0" max={limits.max_tailor_limit} placeholder="Normal Pro limit" className={`form-control form-control-sm ${form.errors.tailor_limit ? 'is-invalid' : ''}`} value={form.data.tailor_limit} onChange={(event) => form.setData('tailor_limit', event.target.value)} />
+                    {form.errors.tailor_limit
+                        ? <div className="invalid-feedback">{form.errors.tailor_limit}</div>
+                        : <div className="form-text">Blank = normal Pro limit per month, 0 = unlimited.</div>}
+                </div>
+            </div>
+            <button type="submit" className="btn btn-sm rt-btn-primary px-3 py-1 mt-2" disabled={form.processing}>
+                <i className="bi bi-gift me-1"></i>{form.processing ? 'Saving...' : submitLabel}
+            </button>
+        </form>
+    );
 }
 
 export function ScoreChange({ before, after }) {

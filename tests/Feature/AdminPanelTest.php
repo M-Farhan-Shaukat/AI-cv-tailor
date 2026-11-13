@@ -175,20 +175,87 @@ class AdminPanelTest extends TestCase
         $this->assertFalse($user->fresh()->isSuspended());
     }
 
-    public function test_gifted_pro_works_without_stripe_and_can_be_removed(): void
+    public function test_a_pro_trial_lasts_the_chosen_days_with_the_chosen_cv_limit_and_can_be_removed(): void
     {
         $admin = User::factory()->admin()->create();
         $user = User::factory()->create();
         $quota = app(UsageQuota::class);
 
-        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['months' => 3])->assertRedirect();
-        $this->assertTrue($quota->isPro($user->fresh()));
-        $this->assertTrue($user->fresh()->pro_until->between(now()->addMonths(3)->subMinute(), now()->addMonths(3)->addMinute()));
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['days' => 10, 'tailor_limit' => 5])->assertRedirect();
 
-        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['months' => 7])->assertSessionHasErrors('months');
+        $user->refresh();
+        $this->assertTrue($quota->isPro($user));
+        $this->assertTrue($user->pro_until->between(now()->addDays(10)->subMinute(), now()->addDays(10)->addMinute()));
+        $this->assertSame(5, $user->pro_tailor_limit);
+        $this->assertSame(5, $quota->summaryForUser($user)['limit']);
+        $this->assertSame(UsageQuota::SOURCE_GIFT, $quota->summaryForUser($user)['source']);
 
-        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['months' => 0])->assertRedirect();
+        $this->travel(11)->days();
         $this->assertFalse($quota->isPro($user->fresh()));
+        $this->travelBack();
+
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['days' => 400])->assertSessionHasErrors('days');
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['days' => 5, 'tailor_limit' => -1])->assertSessionHasErrors('tailor_limit');
+
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['days' => 0])->assertRedirect();
+        $this->assertFalse($quota->isPro($user->fresh()));
+        $this->assertNull($user->fresh()->pro_tailor_limit);
+    }
+
+    public function test_a_pro_trial_without_a_cv_limit_uses_the_normal_pro_limit(): void
+    {
+        config(['billing.pro_monthly_tailors' => 200]);
+        $admin = User::factory()->admin()->create();
+        $user = User::factory()->create();
+
+        $this->actingAs($admin)->post("/admin/users/{$user->id}/pro", ['days' => 30, 'tailor_limit' => null])->assertRedirect();
+
+        $summary = app(UsageQuota::class)->summaryForUser($user->fresh());
+        $this->assertSame(200, $summary['limit']);
+        $this->assertFalse($summary['limit_covers_trial']);
+    }
+
+    public function test_only_super_admins_start_and_end_a_pro_trial_for_everyone(): void
+    {
+        $admin = User::factory()->admin()->create();
+        $superAdmin = User::factory()->superAdmin()->create();
+        $user = User::factory()->create();
+        $quota = app(UsageQuota::class);
+
+        $this->actingAs($admin)->post('/admin/pro-trial', ['days' => 7, 'tailor_limit' => 3])->assertForbidden();
+        $this->assertFalse($quota->isPro($user));
+
+        $this->actingAs($superAdmin)->post('/admin/pro-trial', ['days' => 0])->assertSessionHasErrors('days');
+        $this->actingAs($superAdmin)->post('/admin/pro-trial', ['days' => 7, 'tailor_limit' => 3])->assertRedirect();
+
+        $this->assertTrue($quota->isPro($user));
+        $this->assertTrue($quota->isPro(User::factory()->create()));
+        $this->assertFalse($quota->isPro(null));
+        $this->assertSame(3, $quota->summaryForUser($user)['limit']);
+
+        $this->actingAs($admin)->get('/admin/users?plan=free')
+            ->assertInertia(fn (Assert $page) => $page->has('users.data', 0)->where('siteTrial.tailor_limit', 3));
+
+        $this->travel(8)->days();
+        $this->assertFalse($quota->isPro($user));
+        $this->travelBack();
+
+        $this->actingAs($admin)->delete('/admin/pro-trial')->assertForbidden();
+        $this->actingAs($superAdmin)->delete('/admin/pro-trial')->assertRedirect();
+        $this->assertFalse($quota->isPro($user));
+    }
+
+    public function test_an_accounts_own_trial_or_subscription_wins_over_the_trial_for_everyone(): void
+    {
+        $superAdmin = User::factory()->superAdmin()->create();
+        $subscriber = User::factory()->pro()->create();
+        $gifted = User::factory()->create(['pro_started_at' => now(), 'pro_until' => now()->addDays(30), 'pro_tailor_limit' => 50]);
+        $quota = app(UsageQuota::class);
+
+        $this->actingAs($superAdmin)->post('/admin/pro-trial', ['days' => 7, 'tailor_limit' => 2])->assertRedirect();
+
+        $this->assertSame(UsageQuota::SOURCE_SUBSCRIPTION, $quota->entitlement($subscriber)['source']);
+        $this->assertSame(50, $quota->entitlement($gifted)['limit']);
     }
 
     public function test_deleting_a_user_with_an_active_subscription_is_blocked(): void

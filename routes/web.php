@@ -4,7 +4,9 @@ use App\Http\Controllers\Admin\AdSenseController as AdminAdSenseController;
 use App\Http\Controllers\Admin\AiKeyController as AdminAiKeyController;
 use App\Http\Controllers\Admin\ContactMessageController as AdminContactMessageController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
+use App\Http\Controllers\Admin\PaymentController as AdminPaymentController;
 use App\Http\Controllers\Admin\PostController as AdminPostController;
+use App\Http\Controllers\Admin\ProTrialController as AdminProTrialController;
 use App\Http\Controllers\Admin\SettingsController as AdminSettingsController;
 use App\Http\Controllers\Admin\TailoredResumeController as AdminTailoredResumeController;
 use App\Http\Controllers\Admin\UserController as AdminUserController;
@@ -12,14 +14,21 @@ use App\Http\Controllers\AdminJobMetricsController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BlogController;
 use App\Http\Controllers\JobScanController;
+use App\Http\Controllers\LocalPaymentController;
 use App\Http\Controllers\PageController;
+use App\Http\Controllers\PaymentCallbackController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ResumeTailorController;
 use App\Http\Controllers\SavedJobController;
 use App\Http\Controllers\SavedSearchController;
 use App\Http\Controllers\SeoController;
 use App\Http\Controllers\UserResumeController;
+use App\Http\Middleware\EnsureAccountIsActive;
+use App\Http\Middleware\HandleInertiaRequests;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Route;
+use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 Route::get('/', [ResumeTailorController::class, 'index'])->name('home');
 Route::middleware(['throttle:resume-tailor'])->group(function () {
@@ -32,6 +41,15 @@ Route::get('/tailor/{tailoredResume}', [ResumeTailorController::class, 'show'])-
 Route::get('/download/{tailoredResume}', [ResumeTailorController::class, 'downloadPdf'])->name('resume.download');
 
 Route::get('/pricing', [BillingController::class, 'pricing'])->name('pricing');
+
+// JazzCash and Easypaisa send the payer back here from their own sites: no session (it would replace
+// the payer's login cookie) and no CSRF token. Replies are verified in the controller.
+Route::withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, PreventRequestForgery::class, EnsureAccountIsActive::class, HandleInertiaRequests::class])
+    ->middleware('throttle:30,1')
+    ->group(function () {
+        Route::match(['get', 'post'], '/payments/jazzcash/return', [PaymentCallbackController::class, 'jazzCash'])->name('payments.jazzcash.return');
+        Route::match(['get', 'post'], '/payments/easypaisa/return', [PaymentCallbackController::class, 'easypaisa'])->name('payments.easypaisa.return');
+    });
 
 Route::get('/about', [PageController::class, 'about'])->name('pages.about');
 Route::get('/privacy', [PageController::class, 'privacy'])->name('pages.privacy');
@@ -60,6 +78,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->middleware('throttle:10,1')
         ->name('billing.checkout');
     Route::get('/billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
+    Route::post('/billing/pay/{channel}/{interval}', [LocalPaymentController::class, 'store'])
+        ->whereIn('interval', ['monthly', 'yearly'])
+        ->middleware('throttle:10,1')
+        ->name('billing.pay');
+    Route::get('/billing/payments/{payment}', [LocalPaymentController::class, 'show'])->name('billing.payments.show');
+    Route::get('/billing/payments/{payment}/checkout', [LocalPaymentController::class, 'checkout'])->name('billing.payments.checkout');
+    Route::post('/billing/payments/{payment}/proof', [LocalPaymentController::class, 'submitProof'])->middleware('throttle:10,1')->name('billing.payments.proof');
+    Route::post('/billing/payments/{payment}/refresh', [LocalPaymentController::class, 'refresh'])->middleware('throttle:10,1')->name('billing.payments.refresh');
 
     Route::get('/resumes', [UserResumeController::class, 'index'])->name('resumes.index');
     Route::post('/resumes', [UserResumeController::class, 'store'])->name('resumes.store');
@@ -91,6 +117,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/users/{user}/suspend', [AdminUserController::class, 'suspend'])->name('users.suspend');
         Route::delete('/users/{user}/suspend', [AdminUserController::class, 'unsuspend'])->name('users.unsuspend');
         Route::delete('/users/{user}/resumes/{userResume}', [AdminUserController::class, 'destroyResume'])->name('users.resumes.destroy');
+        Route::post('/pro-trial', [AdminProTrialController::class, 'store'])->name('pro-trial.store');
+        Route::delete('/pro-trial', [AdminProTrialController::class, 'destroy'])->name('pro-trial.destroy');
+
+        Route::get('/payments', [AdminPaymentController::class, 'index'])->name('payments.index');
+        Route::post('/payments/{payment}/approve', [AdminPaymentController::class, 'approve'])->name('payments.approve');
+        Route::post('/payments/{payment}/reject', [AdminPaymentController::class, 'reject'])->name('payments.reject');
+        Route::get('/payments/{payment}/proof', [AdminPaymentController::class, 'proof'])->name('payments.proof');
 
         Route::get('/resumes', [AdminTailoredResumeController::class, 'index'])->name('resumes.index');
         Route::post('/resumes/bulk', [AdminTailoredResumeController::class, 'bulk'])->name('resumes.bulk');

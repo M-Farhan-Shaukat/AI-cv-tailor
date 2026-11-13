@@ -25,6 +25,16 @@ function Field({ name, field, form, unlocked = false, onToggleLock }) {
         );
     }
 
+    if (field.type === 'text') {
+        return (
+            <div className="col-12">
+                <label htmlFor={id} className="form-label fw-semibold small">{field.label}</label>
+                <textarea id={id} rows={3} className={`form-control ${error ? 'is-invalid' : ''}`} placeholder={field.placeholder ?? ''} value={form.data[name] ?? ''} onChange={(event) => form.setData(name, event.target.value)} />
+                {error ? <div className="invalid-feedback d-block">{error}</div> : field.help && <div className="form-text">{field.help}</div>}
+            </div>
+        );
+    }
+
     return (
         <div className="col-md-6">
             <label htmlFor={id} className="form-label fw-semibold small d-flex justify-content-between gap-2">
@@ -130,7 +140,7 @@ function GroupForm({ group, groupKey, extra }) {
     );
 }
 
-export default function Settings({ groups, tab, webhookUrl, seo }) {
+export default function Settings({ groups, tab, webhookUrl, paymentReturnUrls = {}, seo }) {
     const { errors } = usePage().props;
     const [active, setActive] = useState(tab);
     const [isTesting, setIsTesting] = useState(null);
@@ -154,6 +164,25 @@ export default function Settings({ groups, tab, webhookUrl, seo }) {
                     <span className="text-muted">Save your changes first.</span>
                 </div>
                 {errors.stripe_test && <div className="text-danger mt-2">{errors.stripe_test}</div>}
+            </div>
+        ),
+        jazzcash: (
+            <div className="alert alert-light border small mb-4">
+                <div className="fw-semibold mb-1">Return URL</div>
+                In the JazzCash merchant portal, set the return URL to <code>{paymentReturnUrls.jazzcash}</code>.
+                Test in Sandbox first, then switch to Live with your live credentials. Payments are listed under <Link href="/admin/payments">Payments</Link>.
+            </div>
+        ),
+        easypaisa: (
+            <div className="alert alert-light border small mb-4">
+                <div className="fw-semibold mb-1">Post-back URL</div>
+                Easypaisa sends payers back to <code>{paymentReturnUrls.easypaisa}</code>. Ask Easypaisa to allow this URL for your store if they require it.
+                Every payment is confirmed with Easypaisa&apos;s transaction inquiry API, so the API username, password and account number are required.
+            </div>
+        ),
+        bank: (
+            <div className="alert alert-light border small mb-4">
+                Users see these details after choosing bank transfer, then submit their transaction reference. Approve or reject them under <Link href="/admin/payments">Payments</Link>; Pro starts on approval.
             </div>
         ),
         mail: (

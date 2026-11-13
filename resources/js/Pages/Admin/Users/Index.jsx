@@ -1,9 +1,39 @@
 import { Link, router } from '@inertiajs/react';
 import React, { useState } from 'react';
-import { formatDate, Pagination, PlanBadge } from '../../../Components/AdminUi';
+import { describeTrialLimit, formatDate, Pagination, PlanBadge, ProTrialForm } from '../../../Components/AdminUi';
 import AdminLayout from '../../../Layouts/AdminLayout';
 
-export default function UsersIndex({ users, filters, roles, seo }) {
+function SiteTrialCard({ siteTrial, trialLimits, canManage }) {
+    const stop = () => {
+        if (window.confirm('End the Pro trial for everyone now? Accounts go back to their own plan.')) {
+            router.delete('/admin/pro-trial', { preserveScroll: true });
+        }
+    };
+
+    return (
+        <section className="rt-card p-3 p-lg-4 mb-3">
+            <div className="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                <h2 className="rt-card-title mb-0"><i className="bi bi-gift"></i>Pro trial for everyone</h2>
+                {siteTrial
+                    ? <span className="badge text-bg-success">Running until {formatDate(siteTrial.ends_at, true)}</span>
+                    : <span className="badge text-bg-light border">Off</span>}
+            </div>
+            <p className="small text-muted mb-3">
+                {siteTrial
+                    ? `Every signed-in account, including new sign-ups, has Pro since ${formatDate(siteTrial.starts_at)}. Limit: ${describeTrialLimit(siteTrial.tailor_limit)}${siteTrial.tailor_limit ? ' per account for the whole trial' : ''}. Subscribers and accounts with their own trial keep their plan.`
+                    : 'Give every signed-in account Pro for a number of days, with your own limit on tailored CVs. Guests stay on Free.'}
+            </p>
+            {canManage ? (
+                <>
+                    <ProTrialForm key={siteTrial?.ends_at ?? 'none'} url="/admin/pro-trial" limits={trialLimits} submitLabel={siteTrial ? 'Restart trial for everyone' : 'Start trial for everyone'} idPrefix="site-trial" />
+                    {siteTrial && <button type="button" className="btn btn-sm btn-link text-danger px-0 mt-1" onClick={stop}>End trial now</button>}
+                </>
+            ) : <p className="small text-muted mb-0">Only super admins can start or end it.</p>}
+        </section>
+    );
+}
+
+export default function UsersIndex({ users, filters, roles, siteTrial, trialLimits, canManageSiteTrial, seo }) {
     const [form, setForm] = useState({
         search: filters.search ?? '',
         role: filters.role ?? '',
@@ -26,6 +56,7 @@ export default function UsersIndex({ users, filters, roles, seo }) {
 
     return (
         <AdminLayout title="Users" subtitle={`${users.total.toLocaleString()} account${users.total === 1 ? '' : 's'}`} seo={seo}>
+            <SiteTrialCard siteTrial={siteTrial} trialLimits={trialLimits} canManage={canManageSiteTrial} />
             <form className="rt-card p-3 mb-3" onSubmit={(event) => { event.preventDefault(); apply(form); }}>
                 <div className="row g-2 align-items-end">
                     <div className="col-md-4">
@@ -96,7 +127,7 @@ export default function UsersIndex({ users, filters, roles, seo }) {
                                         </div>
                                     </td>
                                     <td className="small">{user.role_label}</td>
-                                    <td><PlanBadge plan={user.plan} complimentary={user.complimentary_pro} /></td>
+                                    <td><PlanBadge plan={user.plan} source={user.plan_source} /></td>
                                     <td className="text-center">{user.tailored_resumes_count}</td>
                                     <td className="text-center">{user.resumes_count}</td>
                                     <td className="small text-muted text-nowrap">{formatDate(user.created_at)}</td>

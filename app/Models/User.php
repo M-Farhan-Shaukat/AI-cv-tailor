@@ -65,6 +65,22 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * @return HasMany<Payment, $this>
+     */
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    /**
+     * Pro paid for once through JazzCash, Easypaisa or a bank transfer (no auto-renewal).
+     */
+    public function hasPaidPro(): bool
+    {
+        return $this->pro_paid_until !== null && $this->pro_paid_until->isFuture();
+    }
+
+    /**
      * Admins and super admins can open the admin panel.
      */
     public function isAdmin(): bool
@@ -95,7 +111,8 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Pro given by an admin, without a Stripe subscription.
+     * Pro (a trial) given by an admin, without a Stripe subscription. pro_tailor_limit caps the CVs
+     * tailored during it: null means the normal Pro limit, 0 unlimited.
      */
     public function hasComplimentaryPro(): bool
     {
@@ -115,6 +132,9 @@ class User extends Authenticatable implements MustVerifyEmail
             'role' => UserRole::class,
             'suspended_at' => 'datetime',
             'pro_until' => 'datetime',
+            'pro_started_at' => 'datetime',
+            'pro_tailor_limit' => 'integer',
+            'pro_paid_until' => 'datetime',
         ];
     }
 }

@@ -313,9 +313,10 @@ export function UsageMeter({ billing }) {
     if (billing.plan === 'pro') {
         return (
             <div className="rt-usage d-flex align-items-center gap-2 small mt-3">
-                <span className="rt-plan-pill"><i className="bi bi-stars"></i>Pro</span>
+                <span className="rt-plan-pill"><i className="bi bi-stars"></i>Pro{billing.trial_ends_at ? ' trial' : ''}</span>
                 <span className="text-muted">
-                    {billing.remaining === null ? 'Unlimited tailored CVs' : `${billing.remaining} tailored CVs left this month`} · all designs unlocked
+                    {billing.remaining === null ? 'Unlimited tailored CVs' : `${billing.remaining} tailored CV${billing.remaining === 1 ? '' : 's'} left ${billing.limit_covers_trial ? 'in your trial' : 'this month'}`} · all designs unlocked
+                    {billing.trial_ends_at && ` · trial ends ${new Date(billing.trial_ends_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`}
                 </span>
             </div>
         );

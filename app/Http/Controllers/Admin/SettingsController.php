@@ -30,6 +30,10 @@ class SettingsController extends Controller
             'groups' => $settings->forAdmin(),
             'tab' => array_key_exists($tab, SiteSettings::GROUPS) ? $tab : 'billing',
             'webhookUrl' => url('/stripe/webhook'),
+            'paymentReturnUrls' => [
+                'jazzcash' => route('payments.jazzcash.return'),
+                'easypaisa' => route('payments.easypaisa.return'),
+            ],
             'seo' => ['title' => 'Settings'],
         ]);
     }
@@ -45,6 +49,11 @@ class SettingsController extends Controller
             'webhook_secret.regex' => 'A webhook signing secret starts with whsec_.',
             'price_monthly.regex' => 'A Stripe price ID starts with price_.',
             'price_yearly.regex' => 'A Stripe price ID starts with price_.',
+            'merchant_id.regex' => 'The merchant ID has only letters and digits, e.g. MC12345.',
+            'store_id.regex' => 'The store ID is a number.',
+            'account_number.regex' => 'The account number has only digits.',
+            'hash_key.size' => 'The Easypaisa hash key is exactly 16 characters.',
+            'iban.regex' => 'A Pakistani IBAN looks like PK36SCBL0000001123456702 (24 characters, no spaces).',
         ]);
 
         $settings->save($group, $validated);

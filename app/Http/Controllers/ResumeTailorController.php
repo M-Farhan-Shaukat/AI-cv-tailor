@@ -341,21 +341,25 @@ class ResumeTailorController extends Controller
     }
 
     /**
-     * 402 when this month's tailored CVs are used up: an upgrade offer on Free, the reset date on Pro.
+     * 402 when the tailored CVs are used up: an upgrade offer on Free and on a trial, the reset date on
+     * paid Pro.
      */
     protected function quotaUpgradeResponse(Request $request, UsageQuota $quota): JsonResponse
     {
         $summary = $quota->summary($request);
         $resetsOn = Carbon::parse($summary['resets_at'])->format('j F');
+        $isTrial = in_array($summary['source'], [UsageQuota::SOURCE_GIFT, UsageQuota::SOURCE_TRIAL], true);
 
-        $message = $summary['plan'] === UsageQuota::PRO
-            ? 'You have reached this month\'s fair-use limit of '.$summary['limit'].' tailored CVs. It resets on '.$resetsOn.'.'
-            : 'You have used your free tailored CV'.($summary['limit'] === 1 ? '' : 's').' for this month. Upgrade to Pro for unlimited tailoring, or come back on '.$resetsOn.'. Checking your ATS score stays free.';
+        $message = match (true) {
+            $summary['limit_covers_trial'] => 'You have used the '.$summary['limit'].' tailored CV'.($summary['limit'] === 1 ? '' : 's').' included in your Pro trial, which ends on '.$resetsOn.'. Upgrade to Pro to keep tailoring. Checking your ATS score stays free.',
+            $summary['plan'] === UsageQuota::PRO => 'You have reached this month\'s fair-use limit of '.$summary['limit'].' tailored CVs. It resets on '.$resetsOn.'.',
+            default => 'You have used your free tailored CV'.($summary['limit'] === 1 ? '' : 's').' for this month. Upgrade to Pro for unlimited tailoring, or come back on '.$resetsOn.'. Checking your ATS score stays free.',
+        };
 
         return response()->json([
             'message' => $message,
             'reason' => 'quota',
-            'upgrade_url' => $summary['plan'] === UsageQuota::PRO ? null : route('pricing'),
+            'upgrade_url' => $summary['plan'] === UsageQuota::PRO && ! $isTrial ? null : route('pricing'),
         ], Response::HTTP_PAYMENT_REQUIRED);
     }
 

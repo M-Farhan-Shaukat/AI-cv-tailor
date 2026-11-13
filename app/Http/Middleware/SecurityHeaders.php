@@ -15,7 +15,7 @@ class SecurityHeaders
     public const PRIVATE_PATHS = [
         'admin', 'admin/*', 'login', 'register', 'forgot-password', 'reset-password/*', 'verify-email', 'verify-email/*',
         'confirm-password', 'profile', 'resumes', 'resumes/*', 'saved-jobs', 'saved-jobs/*', 'saved-searches', 'saved-searches/*',
-        'tailor/*', 'download/*', 'jobs', 'jobs/*', 'billing/*', 'scan',
+        'tailor/*', 'download/*', 'jobs', 'jobs/*', 'billing/*', 'payments/*', 'scan',
     ];
 
     public function handle(Request $request, Closure $next): Response
@@ -28,7 +28,7 @@ class SecurityHeaders
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 
         if (config('security.csp_enabled', true)) {
-            $policy = (string) config('security.csp_policy');
+            $policy = $this->allowPaymentGatewayForms((string) config('security.csp_policy'));
             $adSense = app(AdSense::class);
 
             $response->headers->set('Content-Security-Policy', $adSense->isActive() ? $adSense->extendCsp($policy) : $policy);
@@ -39,6 +39,24 @@ class SecurityHeaders
         }
 
         return $response;
+    }
+
+    /**
+     * JazzCash and Easypaisa checkouts are forms posted to the gateway's site, so form-action has to
+     * allow their hosts.
+     */
+    protected function allowPaymentGatewayForms(string $policy): string
+    {
+        $hosts = collect([
+            ...array_values((array) config('billing.channels.jazzcash.urls', [])),
+            ...collect((array) config('billing.channels.easypaisa.urls', []))->flatten()->all(),
+        ])
+            ->map(fn (mixed $url): ?string => is_string($url) && ($host = parse_url($url, PHP_URL_HOST)) ? 'https://'.$host : null)
+            ->filter()
+            ->unique()
+            ->implode(' ');
+
+        return $hosts === '' ? $policy : (string) preg_replace('/form-action\s+([^;]*)/', 'form-action $1 '.$hosts, $policy, 1);
     }
 
     /**

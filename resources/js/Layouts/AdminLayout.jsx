@@ -10,6 +10,7 @@ const NAVIGATION = [
         group: 'Manage',
         items: [
             { href: '/admin/users', label: 'Users', icon: 'bi-people' },
+            { href: '/admin/payments', label: 'Payments', icon: 'bi-cash-coin' },
             { href: '/admin/resumes', label: 'Tailored resumes', icon: 'bi-file-earmark-text' },
         ],
     },

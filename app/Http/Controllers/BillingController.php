@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\PaymentChannel;
+use App\Enums\PaymentStatus;
+use App\Services\Payments\LocalPayments;
 use App\Services\UsageQuota;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -13,21 +16,31 @@ use Symfony\Component\HttpFoundation\Response;
 
 class BillingController extends Controller
 {
-    public function pricing(Request $request): InertiaResponse
+    public function pricing(Request $request, LocalPayments $payments): InertiaResponse
     {
         $user = $request->user();
         $subscription = $user?->subscription((string) config('billing.subscription_type', 'default'));
+        $channels = collect($payments->availableChannels())->map(fn (PaymentChannel $channel): array => [
+            'value' => $channel->value,
+            'label' => $channel->label(),
+        ])->values();
 
         return Inertia::render('Pricing', [
             'prices' => collect((array) config('billing.prices'))
                 ->map(fn (array $price, string $interval): array => [
                     'interval' => $interval,
-                    'amount' => $price['amount'],
+                    'amount' => (int) $price['amount'],
+                    'amount_label' => LocalPayments::formatAmount((int) $price['amount']),
+                    'monthly_equivalent_label' => $interval === 'yearly' ? LocalPayments::formatAmount((int) round($price['amount'] / 12)) : null,
                     'period' => $price['period'],
                     'note' => $price['note'],
-                    'available' => filled($price['stripe_price']),
+                    'stripe' => $payments->stripeIsAvailable($interval),
+                    'available' => $payments->stripeIsAvailable($interval) || $channels->isNotEmpty(),
                 ])
                 ->values(),
+            'channels' => $channels,
+            'paidUntil' => $user?->hasPaidPro() ? $user->pro_paid_until->toIso8601String() : null,
+            'openPayment' => $user?->payments()->where('status', PaymentStatus::AwaitingReview)->latest()->first()?->only(['id', 'reference']),
             'limits' => [
                 'free_monthly_tailors' => (int) config('billing.free_monthly_tailors', 1),
                 'pro_monthly_tailors' => (int) config('billing.pro_monthly_tailors', 0),
@@ -40,9 +53,10 @@ class BillingController extends Controller
             ],
             'hasBillingAccount' => $user?->hasStripeId() ?? false,
             'checkoutStatus' => in_array($request->query('checkout'), ['success', 'cancelled'], true) ? $request->query('checkout') : null,
+            'paymentStatus' => $request->query('payment') === 'invalid' ? 'invalid' : null,
             'seo' => [
                 'title' => 'Pricing',
-                'description' => 'Check your ATS score free. Tailor one CV free every month, or go Pro for unlimited tailored CVs and every design.',
+                'description' => 'Check your ATS score free. Tailor one CV free every month, or go Pro in rupees with JazzCash, Easypaisa or bank transfer for more tailored CVs and every design.',
             ],
         ]);
     }
@@ -51,16 +65,16 @@ class BillingController extends Controller
      * Send the user to Stripe Checkout for the Pro plan. Subscribers go to the billing portal instead,
      * so nobody pays twice.
      */
-    public function checkout(Request $request, UsageQuota $quota, string $interval): Response
+    public function checkout(Request $request, UsageQuota $quota, LocalPayments $payments, string $interval): Response
     {
         $user = $request->user();
         $priceId = config("billing.prices.{$interval}.stripe_price");
 
-        if ($quota->isPro($user) && $user->hasStripeId()) {
+        if ($quota->isPro($user) && $user->hasStripeId() && $user->subscribed((string) config('billing.subscription_type', 'default'))) {
             return Inertia::location(route('billing.portal'));
         }
 
-        if (blank($priceId)) {
+        if (! $payments->stripeIsAvailable($interval)) {
             return $this->backWithError('Pro checkout is not available yet. Please try again later.');
         }
 

@@ -1,6 +1,6 @@
 import { Link, router, useForm } from '@inertiajs/react';
-import React, { useState } from 'react';
-import { formatDate, formatNumber, PlanBadge, ScoreChange, StatCard } from '../../../Components/AdminUi';
+import React from 'react';
+import { describeTrialLimit, formatDate, formatNumber, PlanBadge, ProTrialForm, ScoreChange, StatCard } from '../../../Components/AdminUi';
 import AdminLayout from '../../../Layouts/AdminLayout';
 
 function EditUserForm({ user, roles, permissions }) {
@@ -54,8 +54,7 @@ function EditUserForm({ user, roles, permissions }) {
     );
 }
 
-export default function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedResumes, tailoredResumes, permissions, roles, proMonths, seo }) {
-    const [months, setMonths] = useState(proMonths.find((value) => value > 0) ?? 1);
+export default function UserShow({ user, billing, subscription, aiUsageToday, counts, uploadedResumes, tailoredResumes, permissions, roles, trialLimits, seo }) {
     const canManage = permissions.manage && !permissions.is_self;
 
     const post = (method, url, data = {}, confirmMessage = null) => {
@@ -85,7 +84,7 @@ export default function UserShow({ user, billing, subscription, aiUsageToday, co
             )}
         >
             <div className="d-flex flex-wrap gap-2 mb-4">
-                <PlanBadge plan={billing.plan} complimentary={user.complimentary_pro} />
+                <PlanBadge plan={billing.plan} source={billing.source} />
                 <span className="badge text-bg-light border">{user.role_label}</span>
                 {user.suspended && <span className="badge text-bg-danger">Suspended</span>}
                 {!user.email_verified && <span className="badge text-bg-warning">Email not verified</span>}
@@ -94,7 +93,7 @@ export default function UserShow({ user, billing, subscription, aiUsageToday, co
 
             <div className="row g-3 mb-4">
                 <div className="col-6 col-xl-3">
-                    <StatCard icon="bi-file-earmark-check" tone="green" label="Tailored this month" value={billing.limit > 0 ? `${billing.used} / ${billing.limit}` : formatNumber(billing.used)} hint={`Resets ${formatDate(billing.resets_at)}`} />
+                    <StatCard icon="bi-file-earmark-check" tone="green" label={billing.limit_covers_trial ? 'Tailored in trial' : 'Tailored this month'} value={billing.limit > 0 ? `${billing.used} / ${billing.limit}` : formatNumber(billing.used)} hint={`${billing.limit_covers_trial ? 'Trial ends' : 'Resets'} ${formatDate(billing.resets_at)}`} />
                 </div>
                 <div className="col-6 col-xl-3">
                     <StatCard icon="bi-archive" tone="indigo" label="Tailored all time" value={formatNumber(counts.tailored_resumes)} hint={`${uploadedResumes.length} uploaded CV${uploadedResumes.length === 1 ? '' : 's'}`} />
@@ -120,25 +119,28 @@ export default function UserShow({ user, billing, subscription, aiUsageToday, co
                         <dl className="row small mb-3">
                             <dt className="col-5 text-muted fw-normal">Stripe subscription</dt>
                             <dd className="col-7">{subscription ? `${subscription.status}${subscription.ends_at ? `, ends ${formatDate(subscription.ends_at)}` : ''}` : 'None'}</dd>
-                            <dt className="col-5 text-muted fw-normal">Gifted Pro</dt>
-                            <dd className="col-7">{user.complimentary_pro ? `Until ${formatDate(user.pro_until)}` : 'None'}</dd>
+                            <dt className="col-5 text-muted fw-normal">Paid Pro (PKR)</dt>
+                            <dd className="col-7">{user.pro_paid_until && new Date(user.pro_paid_until) > new Date() ? `Until ${formatDate(user.pro_paid_until)}` : 'None'} · <Link href={`/admin/payments?search=${encodeURIComponent(user.email)}`}>Payments</Link></dd>
+                            <dt className="col-5 text-muted fw-normal">Pro trial</dt>
+                            <dd className="col-7">{user.complimentary_pro ? `${formatDate(user.pro_started_at)} – ${formatDate(user.pro_until)} · ${describeTrialLimit(user.pro_tailor_limit)}` : 'None'}</dd>
+                            {billing.source === 'trial' && (
+                                <>
+                                    <dt className="col-5 text-muted fw-normal">Trial for everyone</dt>
+                                    <dd className="col-7">Until {formatDate(billing.trial_ends_at)}</dd>
+                                </>
+                            )}
                             <dt className="col-5 text-muted fw-normal">Stripe customer</dt>
                             <dd className="col-7">{user.has_stripe_account ? 'Yes' : 'No'}</dd>
                         </dl>
                         {permissions.manage && (
-                            <div className="d-flex flex-wrap gap-2 align-items-center">
-                                <select className="form-select form-select-sm w-auto" value={months} onChange={(event) => setMonths(Number(event.target.value))} aria-label="Months of Pro">
-                                    {proMonths.filter((value) => value > 0).map((value) => <option key={value} value={value}>{value} month{value === 1 ? '' : 's'}</option>)}
-                                </select>
-                                <button type="button" className="btn btn-sm rt-btn-primary px-3 py-1" onClick={() => post('post', `/admin/users/${user.id}/pro`, { months })}>
-                                    <i className="bi bi-gift me-1"></i>Give Pro
-                                </button>
+                            <>
+                                <ProTrialForm key={user.pro_until ?? 'none'} url={`/admin/users/${user.id}/pro`} limits={trialLimits} submitLabel={user.complimentary_pro ? 'Replace Pro trial' : 'Give Pro trial'} idPrefix="user-trial" />
                                 {user.complimentary_pro && (
-                                    <button type="button" className="btn btn-sm btn-link text-danger" onClick={() => post('post', `/admin/users/${user.id}/pro`, { months: 0 }, 'Remove the gifted Pro?')}>Remove gift</button>
+                                    <button type="button" className="btn btn-sm btn-link text-danger px-0 mt-1" onClick={() => post('post', `/admin/users/${user.id}/pro`, { days: 0 }, 'Remove this Pro trial?')}>Remove Pro trial</button>
                                 )}
-                            </div>
+                            </>
                         )}
-                        <p className="small text-muted mt-3 mb-0">Gifted Pro needs no payment and does not touch Stripe. Paid subscriptions are managed in the Stripe dashboard.</p>
+                        <p className="small text-muted mt-3 mb-0">A Pro trial needs no payment and does not touch Stripe. Giving a new trial restarts its CV count. Paid subscriptions are managed in the Stripe dashboard.</p>
                     </section>
                 </div>
             </div>

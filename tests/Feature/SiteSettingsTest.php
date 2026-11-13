@@ -97,7 +97,7 @@ class SiteSettingsTest extends TestCase
             'username' => 'mailer@example.com', 'password' => 'app-password', 'from_address' => 'hello@resumetailor.test', 'from_name' => 'ResumeTailor AI',
         ])->assertSessionHasNoErrors();
 
-        $this->actingAs($superAdmin)->put('/admin/settings/billing', ['free_monthly_tailors' => 3, 'guest_limit_by_ip' => false, 'pro_monthly_amount' => 'Rs 2,799'])->assertSessionHasNoErrors();
+        $this->actingAs($superAdmin)->put('/admin/settings/billing', ['free_monthly_tailors' => 3, 'guest_limit_by_ip' => false, 'pro_monthly_pkr' => 3499])->assertSessionHasNoErrors();
         $this->actingAs($superAdmin)->put('/admin/settings/jobs', ['jooble_key' => 'jooble-secret', 'adzuna_country' => 'in'])->assertSessionHasNoErrors();
 
         $this->assertSame('smtp', $this->freshlyApplied('mail.default'));
@@ -107,11 +107,11 @@ class SiteSettingsTest extends TestCase
         $this->assertSame('hello@resumetailor.test', $this->freshlyApplied('mail.from.address'));
         $this->assertSame(3, $this->freshlyApplied('billing.free_monthly_tailors'));
         $this->assertFalse($this->freshlyApplied('billing.guest_limit_by_ip'));
-        $this->assertSame('Rs 2,799', $this->freshlyApplied('billing.prices.monthly.amount'));
+        $this->assertSame(3499, $this->freshlyApplied('billing.prices.monthly.amount'));
         $this->assertSame('jooble-secret', $this->freshlyApplied('services.jooble.key'));
         $this->assertSame('in', $this->freshlyApplied('services.adzuna.country'));
 
-        $this->get('/pricing')->assertInertia(fn (Assert $page) => $page->where('limits.free_monthly_tailors', 3)->where('prices.0.amount', 'Rs 2,799'));
+        $this->get('/pricing')->assertInertia(fn (Assert $page) => $page->where('limits.free_monthly_tailors', 3)->where('prices.0.amount', 3499)->where('prices.0.amount_label', 'Rs 3,499'));
     }
 
     public function test_a_preset_provider_needs_only_an_email_and_a_key(): void

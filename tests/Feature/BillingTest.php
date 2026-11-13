@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\TailoredResume;
 use App\Models\User;
+use App\Services\ProTrial;
 use App\Services\UsageQuota;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -146,6 +147,39 @@ class BillingTest extends TestCase
             ->assertJsonPath('upgrade_url', null);
 
         $this->assertStringContainsString('fair-use limit of 1', $response->json('message'));
+    }
+
+    public function test_a_trial_cv_limit_counts_from_the_start_of_the_trial_and_then_offers_an_upgrade(): void
+    {
+        $this->fakeGroq();
+        $user = User::factory()->create();
+        TailoredResume::create(['user_id' => $user->id, 'job_description' => 'JD', 'extracted_cv_text' => self::CV_TEXT]);
+
+        $this->travel(1)->minutes();
+        $user->forceFill(['pro_started_at' => now(), 'pro_until' => now()->addDays(7), 'pro_tailor_limit' => 1])->save();
+
+        $this->actingAs($user)->postJson('/tailor', [...$this->payload(), 'template' => 'tech'])->assertOk();
+
+        $response = $this->actingAs($user)->postJson('/tailor', $this->payload())
+            ->assertStatus(402)
+            ->assertJsonPath('upgrade_url', route('pricing'));
+
+        $this->assertStringContainsString('included in your Pro trial', $response->json('message'));
+    }
+
+    public function test_a_trial_for_everyone_lets_free_accounts_tailor_until_it_ends(): void
+    {
+        $this->fakeGroq();
+        $user = User::factory()->create();
+        TailoredResume::create(['user_id' => $user->id, 'job_description' => 'JD', 'extracted_cv_text' => self::CV_TEXT]);
+        $this->travel(1)->minutes();
+        app(ProTrial::class)->start(3, 0);
+
+        $this->actingAs($user)->postJson('/tailor', [...$this->payload(), 'template' => 'tech'])->assertOk();
+        $this->postJson('/tailor', $this->payload())->assertOk();
+
+        $this->travel(4)->days();
+        $this->assertSame(UsageQuota::FREE, app(UsageQuota::class)->entitlement($user)['plan']);
     }
 
     public function test_a_cancelled_subscription_falls_back_to_free(): void

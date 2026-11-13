@@ -13,7 +13,7 @@ export default function Dashboard({ stats, ai, trend, recentUsers, recentResumes
                     <StatCard label="Users" icon="bi-people" tone="indigo" value={formatNumber(stats.users)} hint={`+${formatNumber(stats.new_users_7_days)} in the last 7 days`} />
                 </div>
                 <div className="col-6 col-xl-3">
-                    <StatCard label="Pro" icon="bi-stars" tone="violet" value={formatNumber(stats.pro_subscribers + stats.complimentary_pro)} hint={`${formatNumber(stats.pro_subscribers)} paying · ${formatNumber(stats.complimentary_pro)} gifted`} />
+                    <StatCard label="Pro" icon="bi-stars" tone="violet" value={formatNumber(stats.pro_subscribers + stats.paid_pro + stats.complimentary_pro)} hint={`${formatNumber(stats.pro_subscribers)} card · ${formatNumber(stats.paid_pro)} rupee · ${formatNumber(stats.complimentary_pro)} trial${stats.payments_awaiting_review ? ` · ${formatNumber(stats.payments_awaiting_review)} to review` : ''}`} />
                 </div>
                 <div className="col-6 col-xl-3">
                     <StatCard label="Tailored this month" icon="bi-file-earmark-check" tone="green" value={formatNumber(stats.tailored_month)} hint={`${formatNumber(stats.tailored_today)} today · ${formatNumber(stats.tailored_total)} all time`} />

@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
+use App\Models\Payment;
 use App\Models\TailoredResume;
 use App\Models\User;
 use App\Services\GroqKeyPool;
@@ -32,6 +34,8 @@ class DashboardController extends Controller
                 'new_users_7_days' => User::query()->where('created_at', '>=', now()->subDays(7))->count(),
                 'pro_subscribers' => Subscription::query()->active()->distinct()->count('user_id'),
                 'complimentary_pro' => User::query()->where('pro_until', '>', now())->count(),
+                'paid_pro' => User::query()->where('pro_paid_until', '>', now())->count(),
+                'payments_awaiting_review' => Payment::query()->where('status', PaymentStatus::AwaitingReview)->count(),
                 'suspended' => User::query()->whereNotNull('suspended_at')->count(),
                 'tailored_today' => TailoredResume::query()->where('created_at', '>=', now()->startOfDay())->count(),
                 'tailored_month' => TailoredResume::query()->where('created_at', '>=', $monthStart)->count(),
