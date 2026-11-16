@@ -1,5 +1,5 @@
 kind: wasmer.io/App.v0
-name: resume-tailor-ats
+name: resumint
 package: .
 
 # Secrets (APP_KEY, APP_URL, mail/Stripe keys...) are NOT stored here.
@@ -18,6 +18,8 @@ env:
   FILESYSTEM_DISK: local
   INERTIA_SSR_ENABLED: "false"
   VIEW_COMPILED_PATH: /app/storage/framework/views
+  # WebAssembly can't fork, so stop Symfony from calling exec() to find the PHP binary.
+  PHP_PATH: /usr/local/bin/php
 
 capabilities:
   # Managed MySQL (engine omitted = MySQL). Wasmer injects
@@ -66,3 +68,5 @@ jobs:
       execute:
         command: artisan
         cli_args: ["jobs:run-saved-searches"]
+owner: m-farhan-shaukat
+app_id: da_RMMIrt4U1QE4
