@@ -35,7 +35,57 @@ function Cell({ value }) {
     return <span className="fw-semibold">{value}</span>;
 }
 
-export default function Pricing({ prices, channels = [], paidUntil = null, openPayment = null, limits, subscription, hasBillingAccount, checkoutStatus, paymentStatus = null, seo }) {
+function CopyButton({ value, label }) {
+    const [copied, setCopied] = useState(false);
+
+    const copy = () => {
+        navigator.clipboard?.writeText(value).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    };
+
+    return (
+        <button type="button" className="btn btn-sm btn-outline-secondary" onClick={copy} aria-label={`Copy ${label}`}>
+            <i className={`bi ${copied ? 'bi-check-lg' : 'bi-copy'}`}></i>
+        </button>
+    );
+}
+
+function ManualPayment({ details, price, user }) {
+    const message = `Assalam o Alaikum, I paid ${price.amount_label} for Pro (${price.interval}) by JazzCash.\nAccount name: ${user.name}\nEmail: ${user.email}\nScreenshot attached.`;
+    const whatsappUrl = `${details.whatsapp_link}?text=${encodeURIComponent(message)}`;
+
+    return (
+        <div className="border rounded-3 p-3 text-start">
+            <p className="small fw-semibold mb-2"><i className="bi bi-phone me-2"></i>Pay with JazzCash</p>
+            <ol className="small ps-3 mb-3">
+                <li className="mb-2">
+                    Send <strong>{price.amount_label}</strong> to this JazzCash account:
+                    <div className="d-flex align-items-center justify-content-between gap-2 bg-light rounded-2 px-2 py-1 mt-1">
+                        <span>
+                            <span className="fw-bold fs-6">{details.jazzcash_number}</span>
+                            <span className="d-block text-muted">{details.account_title}</span>
+                        </span>
+                        <CopyButton value={details.jazzcash_number} label="JazzCash number" />
+                    </div>
+                </li>
+                <li className="mb-2">Take a screenshot of the payment.</li>
+                <li>
+                    Send the screenshot and your account name (<strong>{user.name}</strong>) on WhatsApp to <strong>{details.whatsapp_number}</strong>.
+                </li>
+            </ol>
+            <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="btn btn-success w-100">
+                <i className="bi bi-whatsapp me-2"></i>Send screenshot on WhatsApp
+            </a>
+            <small className="text-muted d-block mt-2 text-center">
+                <i className="bi bi-clock me-1"></i>Your Pro account is activated within {details.activation_time}.
+            </small>
+        </div>
+    );
+}
+
+export default function Pricing({ prices, channels = [], manualPayment = null, paidUntil = null, openPayment = null, limits, subscription, hasBillingAccount, checkoutStatus, paymentStatus = null, seo }) {
     const { auth, billing, errors } = usePage().props;
     const user = auth?.user;
     const isPro = billing?.plan === 'pro';
@@ -196,6 +246,8 @@ export default function Pricing({ prices, channels = [], paidUntil = null, openP
                                         <Link href="/register" className="btn rt-btn-primary w-100">Get Pro</Link>
                                         <small className="text-muted d-block mt-2 text-center">Create a free account first. Already have one? <Link href="/login">Log in</Link></small>
                                     </>
+                                ) : canPay && manualPayment ? (
+                                    <ManualPayment details={manualPayment} price={price} user={user} />
                                 ) : canPay ? (
                                     <>
                                         {methods.length > 0 && (

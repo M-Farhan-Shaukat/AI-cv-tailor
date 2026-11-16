@@ -122,4 +122,22 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Manual payment fallback
+    |--------------------------------------------------------------------------
+    |
+    | Shown on the pricing page only when every payment channel above (and
+    | Stripe) is switched off: the user sends the amount to this JazzCash
+    | number and a screenshot on WhatsApp, and an admin switches Pro on.
+    |
+    */
+
+    'manual_payment' => [
+        'jazzcash_number' => env('MANUAL_PAYMENT_JAZZCASH_NUMBER', '03010017469'),
+        'account_title' => env('MANUAL_PAYMENT_ACCOUNT_TITLE', 'Muhammad Farhan Shaukat'),
+        'whatsapp_number' => env('MANUAL_PAYMENT_WHATSAPP_NUMBER', '+923010017469'),
+        'activation_time' => env('MANUAL_PAYMENT_ACTIVATION_TIME', '10 to 15 minutes'),
+    ],
+
 ];

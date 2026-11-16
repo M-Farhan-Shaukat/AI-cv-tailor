@@ -279,6 +279,48 @@ class BillingTest extends TestCase
                 ->where('subscription.active', true));
     }
 
+    public function test_the_pricing_page_offers_jazzcash_and_whatsapp_when_every_payment_channel_is_off(): void
+    {
+        config([
+            'billing.channels.jazzcash.enabled' => false,
+            'billing.channels.easypaisa.enabled' => false,
+            'billing.channels.bank_transfer.enabled' => false,
+            'billing.manual_payment.jazzcash_number' => '03010017469',
+            'billing.manual_payment.whatsapp_number' => '+923010017469',
+        ]);
+
+        $this->actingAs(User::factory()->create())
+            ->get('/pricing')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->where('channels', [])
+                ->where('manualPayment.jazzcash_number', '03010017469')
+                ->where('manualPayment.whatsapp_link', 'https://wa.me/923010017469'));
+    }
+
+    public function test_the_manual_payment_instructions_are_hidden_while_any_payment_channel_is_on(): void
+    {
+        config([
+            'billing.channels.jazzcash.enabled' => false,
+            'billing.channels.easypaisa.enabled' => false,
+            'billing.channels.bank_transfer.enabled' => false,
+            'billing.prices.monthly.stripe_price' => 'price_monthly',
+        ]);
+
+        $this->get('/pricing')
+            ->assertInertia(fn (AssertableInertia $page) => $page->where('manualPayment', null));
+
+        config([
+            'billing.prices.monthly.stripe_price' => null,
+            'billing.channels.bank_transfer' => ['enabled' => true, 'bank_name' => 'Meezan Bank', 'account_title' => 'Resume Tailor', 'account_number' => '0101234567', 'iban' => null, 'instructions' => null],
+        ]);
+
+        $this->get('/pricing')
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->has('channels', 1)
+                ->where('manualPayment', null));
+    }
+
     public function test_an_active_subscriber_must_cancel_before_deleting_the_account(): void
     {
         $user = User::factory()->pro()->create();
