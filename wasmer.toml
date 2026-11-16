@@ -1,0 +1,23 @@
+[dependencies]
+"php/php" = "=8.3.4"
+
+[fs]
+"/app/" = "."
+
+# Web server: PHP's built-in server with Laravel's front controller.
+[[command]]
+name = "run"
+module = "php/php:php"
+runner = "wasi"
+
+[command.annotations.wasi]
+main-args = ["-t", "/app/public", "-S", "localhost:8080"]
+
+# Runs `php artisan <args>`; used by the jobs in app.yaml (migrations, feeds, queue).
+[[command]]
+name = "artisan"
+module = "php/php:php"
+runner = "wasi"
+
+[command.annotations.wasi]
+main-args = ["/app/artisan"]

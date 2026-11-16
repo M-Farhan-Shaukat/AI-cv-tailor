@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+node_modules
+tests
+storage/logs/*
+storage/framework/views/*
+storage/framework/sessions/*
+storage/framework/cache/*
+database/database.sqlite
+bootstrap/ssr
+.phpunit.result.cache
+.claude
+.agents
+.junie
+.vscode
+.idea

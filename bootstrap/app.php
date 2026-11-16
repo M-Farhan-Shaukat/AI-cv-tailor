@@ -16,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Hosts like Wasmer Edge terminate HTTPS at a proxy; trust its forwarded headers.
+        $middleware->trustProxies(at: env('TRUSTED_PROXIES', '*'));
+
         $middleware->web(append: [
             EnsureAccountIsActive::class,
             HandleInertiaRequests::class,

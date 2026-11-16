@@ -1,0 +1,68 @@
+kind: wasmer.io/App.v0
+name: resume-tailor-ats
+package: .
+
+# Secrets (APP_KEY, APP_URL, mail/Stripe keys...) are NOT stored here.
+# Set them with: wasmer app secrets create KEY VALUE
+env:
+  APP_NAME: "AI Resume Tailor & ATS"
+  APP_ENV: production
+  APP_DEBUG: "false"
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: warning
+  DB_CONNECTION: mysql
+  SESSION_DRIVER: database
+  CACHE_STORE: database
+  QUEUE_CONNECTION: database
+  DB_QUEUE_RETRY_AFTER: "900"
+  FILESYSTEM_DISK: local
+  INERTIA_SSR_ENABLED: "false"
+  VIEW_COMPILED_PATH: /app/storage/framework/views
+
+capabilities:
+  # Managed MySQL (engine omitted = MySQL). Wasmer injects
+  # DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD.
+  database: {}
+
+# Persistent, writable storage for uploads (payment proofs) and compiled views.
+volumes:
+  - name: storage
+    mount: /app/storage
+
+scaling:
+  mode: single_concurrency
+
+# Laravel's scheduler spawns sub-processes, which WebAssembly can't do,
+# so each scheduled task from routes/console.php runs as its own Wasmer job.
+jobs:
+  - name: migrate
+    trigger: pre-deployment
+    action:
+      execute:
+        command: artisan
+        cli_args: ["migrate", "--force", "--no-interaction"]
+
+  - name: queue-worker
+    trigger: "* * * * *"
+    timeout: 15m
+    max_schedule_drift: 15m
+    action:
+      execute:
+        command: artisan
+        cli_args: ["queue:work", "--stop-when-empty", "--max-time=840", "--timeout=840", "--tries=3"]
+
+  - name: job-feeds-auto-sync
+    trigger: "*/15 * * * *"
+    timeout: 10m
+    action:
+      execute:
+        command: artisan
+        cli_args: ["jobs:auto-sync"]
+
+  - name: saved-searches
+    trigger: "0 * * * *"
+    timeout: 10m
+    action:
+      execute:
+        command: artisan
+        cli_args: ["jobs:run-saved-searches"]
