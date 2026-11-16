@@ -39,6 +39,7 @@ class BillingController extends Controller
                 ])
                 ->values(),
             'channels' => $channels,
+            'manualPayment' => $this->manualPayment($payments, $channels->isEmpty()),
             'paidUntil' => $user?->hasPaidPro() ? $user->pro_paid_until->toIso8601String() : null,
             'openPayment' => $user?->payments()->where('status', PaymentStatus::AwaitingReview)->latest()->first()?->only(['id', 'reference']),
             'limits' => [
@@ -112,6 +113,31 @@ class BillingController extends Controller
 
             return $this->backWithError('We could not open the billing page. Please try again in a moment.');
         }
+    }
+
+    /**
+     * JazzCash-to-WhatsApp instructions, offered only when no payment channel or Stripe price is on.
+     *
+     * @return array{jazzcash_number: string, account_title: string, whatsapp_number: string, whatsapp_link: string, activation_time: string}|null
+     */
+    protected function manualPayment(LocalPayments $payments, bool $hasNoChannels): ?array
+    {
+        $hasStripe = collect(array_keys((array) config('billing.prices')))
+            ->contains(fn (string $interval): bool => $payments->stripeIsAvailable($interval));
+
+        if (! $hasNoChannels || $hasStripe) {
+            return null;
+        }
+
+        $details = (array) config('billing.manual_payment');
+
+        return [
+            'jazzcash_number' => (string) $details['jazzcash_number'],
+            'account_title' => (string) $details['account_title'],
+            'whatsapp_number' => (string) $details['whatsapp_number'],
+            'whatsapp_link' => 'https://wa.me/'.preg_replace('/\D/', '', (string) $details['whatsapp_number']),
+            'activation_time' => (string) $details['activation_time'],
+        ];
     }
 
     protected function backWithError(string $message): RedirectResponse
