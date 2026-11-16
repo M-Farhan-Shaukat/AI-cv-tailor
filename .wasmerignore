@@ -15,3 +15,4 @@ bootstrap/ssr
 .junie
 .vscode
 .idea
+storage/app/private/setup
