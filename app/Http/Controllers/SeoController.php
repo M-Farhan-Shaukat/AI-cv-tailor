@@ -41,13 +41,14 @@ class SeoController extends Controller
     {
         $posts = Post::query()->published()->latest('published_at')->get(['slug', 'updated_at']);
 
-        return response()
-            ->view('seo.sitemap', [
-                'pages' => array_map(fn (string $name): string => route($name), self::STATIC_PAGES),
-                'posts' => $posts,
-                'lastPostUpdate' => $posts->max('updated_at'),
-            ])
-            ->header('Content-Type', 'application/xml; charset=UTF-8');
+        $urlset = view('seo.sitemap', [
+            'pages' => array_map(fn (string $name): string => route($name), self::STATIC_PAGES),
+            'posts' => $posts,
+            'lastPostUpdate' => $posts->max('updated_at'),
+        ])->render();
+
+        /** The XML declaration is added here because "<?xml" inside a compiled Blade view breaks on PHP builds with short_open_tag on (Wasmer). */
+        return response('<?xml version="1.0" encoding="UTF-8"?>'."\n".$urlset, 200, ['Content-Type' => 'application/xml; charset=UTF-8']);
     }
 
     public function adsTxt(AdSense $adSense): Response
