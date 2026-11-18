@@ -12,6 +12,8 @@ export default function MainLayout({ children, seo = {} }) {
     const title = seo.title ? `${seo.title} | ${siteName}` : `${siteName}: ATS resume checker and CV tailoring`;
     const description = seo.description || 'Check your CV against any job description, see your ATS score and tailor your resume with the job\'s keywords.';
     const canonical = props.site?.canonical;
+
+    const image = seo.image || `${props.site?.url || ''}/images/resumetailor-banner.png`;
     const flash = props.flash?.status;
 
     return (
@@ -25,7 +27,13 @@ export default function MainLayout({ children, seo = {} }) {
                 <meta property="og:description" content={description} />
                 <meta property="og:type" content={seo.type || 'website'} />
                 {canonical && <meta property="og:url" content={canonical} />}
-                <meta name="twitter:card" content="summary" />
+                <meta property="og:image" content={image} />
+                <meta property="og:image:width" content="1200" />
+                <meta property="og:image:height" content="627" />
+                <meta name="twitter:card" content="summary_large_image" />
+                <meta name="twitter:title" content={title} />
+                <meta name="twitter:description" content={description} />
+                <meta name="twitter:image" content={image} />
             </Head>
             <main className="position-relative min-vh-100 d-flex flex-column">
                 {flash && (

@@ -24,6 +24,18 @@ class ContentAndSeoTest extends TestCase
         }
     }
 
+    public function test_social_share_tags_are_in_the_server_html_for_crawlers(): void
+    {
+        config(['app.url' => 'https://resumint.wasmer.app', 'inertia.ssr.enabled' => false]);
+
+        $this->get('/about')
+            ->assertOk()
+            ->assertSee('<meta data-inertia="server-og-image" property="og:image" content="https://resumint.wasmer.app/images/resumetailor-banner.png">', false)
+            ->assertSee('name="twitter:card" content="summary_large_image"', false)
+            ->assertSee('property="og:url" content="'.url('/about').'"', false)
+            ->assertSee('<title data-inertia="server-title">', false);
+    }
+
     public function test_a_contact_message_is_stored_and_emailed_to_super_admins(): void
     {
         Mail::fake();
