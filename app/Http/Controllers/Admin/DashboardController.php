@@ -9,6 +9,7 @@ use App\Models\TailoredResume;
 use App\Models\User;
 use App\Services\GroqKeyPool;
 use App\Services\LlmUsageTracker;
+use App\Services\TrafficTracker;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -18,7 +19,7 @@ class DashboardController extends Controller
 {
     protected const TREND_DAYS = 14;
 
-    public function __invoke(LlmUsageTracker $usage, GroqKeyPool $keys): Response
+    public function __invoke(LlmUsageTracker $usage, GroqKeyPool $keys, TrafficTracker $traffic): Response
     {
         $monthStart = now()->startOfMonth();
         $improvement = TailoredResume::query()
@@ -48,6 +49,7 @@ class DashboardController extends Controller
                 'paused_keys' => collect($keys->statuses())->where('paused_seconds', '>', 0)->count(),
             ],
             'trend' => $this->dailyTailoring(),
+            'traffic' => $traffic->daily(self::TREND_DAYS),
             'recentUsers' => User::query()->latest()->limit(6)->get()
                 ->map(fn (User $user): array => [
                     'id' => $user->id,

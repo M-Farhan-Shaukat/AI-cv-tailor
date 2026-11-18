@@ -3,12 +3,17 @@ import React from 'react';
 import { formatDate, formatNumber, ScoreChange, StatCard } from '../../Components/AdminUi';
 import AdminLayout from '../../Layouts/AdminLayout';
 
-export default function Dashboard({ stats, ai, trend, recentUsers, recentResumes, seo }) {
+export default function Dashboard({ stats, ai, trend, traffic = [], recentUsers, recentResumes, seo }) {
     const peak = Math.max(1, ...trend.map((day) => day.count));
+    const today = traffic[traffic.length - 1] || { page_views: 0, visitors: 0, scans: 0, tailored: 0, server_errors: 0 };
+    const trafficNewestFirst = [...traffic].reverse();
 
     return (
         <AdminLayout title="Dashboard" subtitle="Users, plans, tailoring activity and AI usage at a glance." seo={seo}>
             <div className="row g-3 mb-4">
+                <div className="col-6 col-xl-3">
+                    <StatCard label="Visitors today" icon="bi-eye" tone="sky" value={formatNumber(today.visitors)} hint={`${formatNumber(today.page_views)} page views · ${formatNumber(today.scans)} ATS scans`} />
+                </div>
                 <div className="col-6 col-xl-3">
                     <StatCard label="Users" icon="bi-people" tone="indigo" value={formatNumber(stats.users)} hint={`+${formatNumber(stats.new_users_7_days)} in the last 7 days`} />
                 </div>
@@ -42,6 +47,39 @@ export default function Dashboard({ stats, ai, trend, recentUsers, recentResumes
                             <small>{new Date(`${day.date}T00:00:00`).getDate()}</small>
                         </div>
                     ))}
+                </div>
+            </section>
+
+            <section className="rt-card mb-4">
+                <div className="p-3 p-lg-4 pb-2">
+                    <h2 className="rt-card-title"><i className="bi bi-activity"></i>Traffic, last 14 days</h2>
+                    <p className="small text-muted mb-0">Human page views only: bots, admins and asset requests are not counted. Visitors are unique per day.</p>
+                </div>
+                <div className="table-responsive">
+                    <table className="table rt-admin-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Day</th>
+                                <th className="text-end">Visitors</th>
+                                <th className="text-end">Page views</th>
+                                <th className="text-end">ATS scans</th>
+                                <th className="text-end">Tailored</th>
+                                <th className="text-end">Server errors</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {trafficNewestFirst.map((day) => (
+                                <tr key={day.date}>
+                                    <td className="text-nowrap">{formatDate(day.date)}</td>
+                                    <td className="text-end fw-semibold">{formatNumber(day.visitors)}</td>
+                                    <td className="text-end">{formatNumber(day.page_views)}</td>
+                                    <td className="text-end">{formatNumber(day.scans)}</td>
+                                    <td className="text-end">{formatNumber(day.tailored)}</td>
+                                    <td className={`text-end ${day.server_errors > 0 ? 'text-danger fw-semibold' : 'text-muted'}`}>{formatNumber(day.server_errors)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             </section>
 

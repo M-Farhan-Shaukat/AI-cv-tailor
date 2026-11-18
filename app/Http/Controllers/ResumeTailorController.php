@@ -12,6 +12,7 @@ use App\Services\ResumeDesign;
 use App\Services\ResumeDesignExtractor;
 use App\Services\ResumeTailor;
 use App\Services\ResumeTextExtractor;
+use App\Services\TrafficTracker;
 use App\Services\UsageQuota;
 use App\Services\UserResumeStore;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -84,7 +85,7 @@ class ResumeTailorController extends Controller
      * Score the CV against the job description without rewriting it. Uses one cached keyword extraction,
      * so it is fast and cheap, and gives the same score as the "before" score of tailoring.
      */
-    public function scan(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, KeywordVisibility $visibility): JsonResponse
+    public function scan(Request $request, ResumeTailor $resumeTailor, ResumeTextExtractor $extractor, KeywordVisibility $visibility, TrafficTracker $traffic): JsonResponse
     {
         $request->validate($this->cvAndJobDescriptionRules());
 
@@ -97,6 +98,8 @@ class ResumeTailorController extends Controller
         } catch (RuntimeException $exception) {
             return response()->json(['message' => $exception->getMessage()], Response::HTTP_BAD_GATEWAY);
         }
+
+        $traffic->recordScan();
 
         return response()->json([
             'job_title' => $scan['job_title'],

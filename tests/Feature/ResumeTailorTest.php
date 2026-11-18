@@ -327,6 +327,7 @@ class ResumeTailorTest extends TestCase
             ->assertJsonPath('score.breakdown.contact.tip', 'Add a phone number as plain text at the top.')
             ->assertJsonPath('score.missing.0.term', 'REST APIs');
 
+        $this->assertDatabaseHas('daily_traffic', ['date' => now()->toDateString(), 'scans' => 1]);
         $this->assertStringStartsWith('Add these required keywords if you have the experience: REST APIs, software development.', $response->json('score.breakdown.keywords.tip'));
         Http::assertSentCount(1);
         $this->assertDatabaseCount('tailored_resumes', 0);
