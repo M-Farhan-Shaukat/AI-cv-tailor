@@ -6,6 +6,9 @@ import 'bootstrap/dist/js/bootstrap.bundle.min.js';
 import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createRoot, hydrateRoot } from 'react-dom/client';
+import { installClientErrorReporter } from './Components/ClientErrorReporter';
+
+installClientErrorReporter();
 
 createInertiaApp({
     title: (title) => title,

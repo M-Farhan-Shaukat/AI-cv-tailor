@@ -24,6 +24,7 @@ const NAVIGATION = [
     {
         group: 'System',
         items: [
+            { href: '/admin/request-logs', label: 'Request logs', icon: 'bi-journal-code' },
             { href: '/admin/ai-keys', label: 'AI keys', icon: 'bi-key' },
             { href: '/admin/jobs', label: 'Job feeds', icon: 'bi-broadcast' },
             { href: '/admin/adsense', label: 'AdSense', icon: 'bi-badge-ad' },

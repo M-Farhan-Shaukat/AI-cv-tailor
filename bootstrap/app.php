@@ -3,6 +3,7 @@
 use App\Http\Middleware\EnsureAccountIsActive;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\LogRequests;
 use App\Http\Middleware\RecordTraffic;
 use App\Http\Middleware\SecurityHeaders;
 use Illuminate\Foundation\Application;
@@ -25,6 +26,11 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleInertiaRequests::class,
             SecurityHeaders::class,
             RecordTraffic::class,
+        ]);
+
+        // First in the web stack, so CSRF, session and throttle failures are logged too.
+        $middleware->web(prepend: [
+            LogRequests::class,
         ]);
 
         $middleware->preventRequestForgery(except: [

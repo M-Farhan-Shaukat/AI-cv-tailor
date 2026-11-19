@@ -7,12 +7,14 @@ use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\Admin\PaymentController as AdminPaymentController;
 use App\Http\Controllers\Admin\PostController as AdminPostController;
 use App\Http\Controllers\Admin\ProTrialController as AdminProTrialController;
+use App\Http\Controllers\Admin\RequestLogController as AdminRequestLogController;
 use App\Http\Controllers\Admin\SettingsController as AdminSettingsController;
 use App\Http\Controllers\Admin\TailoredResumeController as AdminTailoredResumeController;
 use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\AdminJobMetricsController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BlogController;
+use App\Http\Controllers\ClientErrorController;
 use App\Http\Controllers\JobScanController;
 use App\Http\Controllers\LocalPaymentController;
 use App\Http\Controllers\PageController;
@@ -56,6 +58,7 @@ Route::get('/privacy', [PageController::class, 'privacy'])->name('pages.privacy'
 Route::get('/terms', [PageController::class, 'terms'])->name('pages.terms');
 Route::get('/contact', [PageController::class, 'contact'])->name('pages.contact');
 Route::post('/contact', [PageController::class, 'sendContact'])->middleware('throttle:5,10')->name('pages.contact.send');
+Route::post('/client-errors', [ClientErrorController::class, 'store'])->middleware('throttle:20,1')->name('client-errors.store');
 
 Route::get('/blog', [BlogController::class, 'index'])->name('blog.index');
 Route::get('/blog/{slug}', [BlogController::class, 'show'])->where('slug', '[a-z0-9-]+')->name('blog.show');
@@ -134,6 +137,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/posts/{post}/edit', [AdminPostController::class, 'edit'])->name('posts.edit');
         Route::put('/posts/{post}', [AdminPostController::class, 'update'])->name('posts.update');
         Route::delete('/posts/{post}', [AdminPostController::class, 'destroy'])->name('posts.destroy');
+
+        Route::get('/request-logs', [AdminRequestLogController::class, 'index'])->name('request-logs.index');
 
         Route::get('/messages', [AdminContactMessageController::class, 'index'])->name('messages.index');
         Route::patch('/messages/{contactMessage}', [AdminContactMessageController::class, 'update'])->name('messages.update');
