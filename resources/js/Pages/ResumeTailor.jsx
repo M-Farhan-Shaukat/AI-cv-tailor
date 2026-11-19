@@ -95,7 +95,12 @@ export default function ResumeTailor({ seo, prefill = null, maxJobDescriptionWor
     const jobDescriptionWords = useMemo(() => (jobDescription.match(/\S+/g) || []).length, [jobDescription]);
     const isJobDescriptionTooLong = jobDescriptionWords > maxJobDescriptionWords;
 
-    const selectFile = (file) => {
+    /**
+     * Copies the picked file into memory right away. On Android, a file picked from WhatsApp, Drive or
+     * Downloads is only readable for a short time: after switching apps (e.g. to copy the job description)
+     * the browser can lose access, and the upload is silently cancelled before it reaches the server.
+     */
+    const selectFile = async (file) => {
         setError('');
         if (!file) {
             return;
@@ -108,7 +113,20 @@ export default function ResumeTailor({ seo, prefill = null, maxJobDescriptionWor
             setError('File size must be under 5MB.');
             return;
         }
-        setCvFile(file);
+
+        try {
+            const contents = await file.arrayBuffer();
+            const type = file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+            setCvFile(new File([contents], file.name, { type, lastModified: file.lastModified }));
+        } catch (readError) {
+            console.error('Could not read the selected CV file', readError);
+            setCvFile(null);
+            setError('Your phone did not let us read this file. Please save the CV to your device and pick it again.');
+        }
+
+        if (fileInput.current) {
+            fileInput.current.value = '';
+        }
     };
 
     const clearFile = () => {

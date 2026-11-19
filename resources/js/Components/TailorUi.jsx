@@ -22,7 +22,7 @@ export const errorMessage = (err, fallback) => {
     if (!err?.response) {
         console.error('Tailor request failed without a server response', err);
         return err?.request
-            ? 'No response from the server. Check that the app is still running and try again.'
+            ? 'Your request did not reach the server. Check your connection and try again. If you uploaded a CV, remove it and pick the file again.'
             : 'Something went wrong while showing the result. Please reload the page and try again.';
     }
     return err?.response?.data?.message || err?.message || fallback;
