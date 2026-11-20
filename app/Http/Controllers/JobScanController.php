@@ -18,6 +18,7 @@ use Illuminate\Database\Query\JoinClause;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -41,6 +42,30 @@ class JobScanController extends Controller
         $matcherKey = $this->matcherKey($request);
         $query = $this->filteredQuery($filters, $matcherKey);
 
+        return Inertia::render('Jobs/Index', [
+            'jobs' => Inertia::scroll(fn (): LengthAwarePaginator => $this->jobsPage($request, $query, $matcherKey))->defer(),
+            'filters' => $filters,
+            'status' => $matcherKey ? $this->status->get($matcherKey) : null,
+            'hasCv' => $this->cv($request) !== null,
+            'cvFilename' => $this->cv($request)['filename'] ?? null,
+            'canSaveSearch' => $request->user() !== null,
+            'defaultMinScore' => (int) config('job_scan.saved_search_min_score', 60),
+            'seo' => [
+                'title' => 'Job matches for your CV',
+                'description' => 'Scan live job postings and see how well your CV matches each role before you apply.',
+            ],
+        ]);
+    }
+
+    /**
+     * One page of job postings with the viewer's match scores and saved state. Loaded after the page
+     * renders (deferred) and page by page as the visitor scrolls (infinite scroll).
+     *
+     * @param  Builder<JobPosting>  $query
+     * @return LengthAwarePaginator<int, array<string, mixed>>
+     */
+    protected function jobsPage(Request $request, Builder $query, ?string $matcherKey): LengthAwarePaginator
+    {
         $postings = $query
             ->paginate((int) config('job_scan.results_per_page', 20))
             ->withQueryString();
@@ -61,25 +86,11 @@ class JobScanController extends Controller
                 ->keyBy('job_posting_id')
             : collect();
 
-        $postings->through(fn (JobPosting $posting): array => $this->presenter->summary(
+        return $postings->through(fn (JobPosting $posting): array => $this->presenter->summary(
             $posting,
             $matches->get($posting->id),
             $savedJobs->get($posting->id),
         ));
-
-        return Inertia::render('Jobs/Index', [
-            'jobs' => $postings,
-            'filters' => $filters,
-            'status' => $matcherKey ? $this->status->get($matcherKey) : null,
-            'hasCv' => $this->cv($request) !== null,
-            'cvFilename' => $this->cv($request)['filename'] ?? null,
-            'canSaveSearch' => $request->user() !== null,
-            'defaultMinScore' => (int) config('job_scan.saved_search_min_score', 60),
-            'seo' => [
-                'title' => 'Job matches for your CV',
-                'description' => 'Scan live job postings and see how well your CV matches each role before you apply.',
-            ],
-        ]);
     }
 
     public function scan(Request $request, ResumeTextExtractor $extractor): JsonResponse|RedirectResponse

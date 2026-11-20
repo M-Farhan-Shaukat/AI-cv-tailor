@@ -6,7 +6,7 @@ import Footer from '../Components/Footer';
  * Public pages: title, description, canonical URL and Open Graph tags, the flash message and the footer.
  * Everything here renders the same on the server (SSR) and in the browser.
  */
-export default function MainLayout({ children, seo = {} }) {
+export default function MainLayout({ children, seo = {}, showFooter = true }) {
     const { props } = usePage();
     const siteName = props.site?.name || 'ResumeTailor AI';
     const title = seo.title ? `${seo.title} | ${siteName}` : `${siteName}: ATS resume checker and CV tailoring`;
@@ -43,7 +43,7 @@ export default function MainLayout({ children, seo = {} }) {
                     </div>
                 )}
                 {children}
-                <Footer />
+                {showFooter && <Footer />}
             </main>
         </>
     );

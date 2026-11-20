@@ -42,6 +42,27 @@ class SavedJobTest extends TestCase
         $this->assertDatabaseCount('saved_jobs', 0);
     }
 
+    public function test_the_job_list_can_save_and_unsave_in_place_with_json(): void
+    {
+        $user = User::factory()->create();
+        $job = JobPosting::factory()->create();
+
+        $saved = $this->actingAs($user)
+            ->postJson("/jobs/{$job->id}/save")
+            ->assertOk()
+            ->assertJsonPath('saved.status', ApplicationStatus::Saved->value)
+            ->json('saved');
+
+        $this->assertSame(SavedJob::query()->sole()->id, $saved['id']);
+
+        $this->actingAs($user)
+            ->deleteJson("/saved-jobs/{$saved['id']}")
+            ->assertOk()
+            ->assertJsonPath('saved', null);
+
+        $this->assertDatabaseCount('saved_jobs', 0);
+    }
+
     public function test_saving_the_same_job_twice_does_not_create_a_duplicate(): void
     {
         $user = User::factory()->create();

@@ -39,7 +39,7 @@ const initials = (name = '') => name.split(/\s+/).filter(Boolean).slice(0, 2).ma
  * The admin shell: a dark sidebar with grouped sections and the signed-in admin, a top bar with the
  * page title and actions, and toast messages for actions that redirect back with a status.
  */
-export default function AdminLayout({ title, subtitle, actions = null, children, seo }) {
+export default function AdminLayout({ title, subtitle, crumb = null, actions = null, children, seo }) {
     const { url, props } = usePage();
     const path = url.split('?')[0];
     const user = props.auth?.user;
@@ -115,11 +115,11 @@ export default function AdminLayout({ title, subtitle, actions = null, children,
                     <button type="button" className="btn btn-sm btn-light border d-lg-none" aria-label="Open menu" onClick={() => setIsSidebarOpen(true)}>
                         <i className="bi bi-list"></i>
                     </button>
-                    <span className="fw-semibold d-sm-none">{title}</span>
+                    <span className="fw-semibold d-sm-none">{crumb ?? title}</span>
                     <nav aria-label="Breadcrumb" className="small text-muted d-none d-sm-block">
                         <Link href="/admin" className="text-decoration-none text-muted">Admin</Link>
                         <i className="bi bi-chevron-right mx-2 small"></i>
-                        <span className="text-body fw-semibold">{title}</span>
+                        <span className="text-body fw-semibold">{crumb ?? title}</span>
                     </nav>
                     <div className="ms-auto d-flex align-items-center gap-2">
                         <span className="badge rounded-pill text-bg-light border d-none d-md-inline-flex align-items-center gap-1">

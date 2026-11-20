@@ -6,6 +6,7 @@ use App\Enums\ApplicationStatus;
 use App\Models\JobPosting;
 use App\Models\SavedJob;
 use App\Services\JobPostingPresenter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -42,7 +43,7 @@ class SavedJobController extends Controller
         ]);
     }
 
-    public function store(Request $request, JobPosting $jobPosting): RedirectResponse
+    public function store(Request $request, JobPosting $jobPosting): RedirectResponse|JsonResponse
     {
         $savedJob = SavedJob::query()->firstOrCreate(
             [
@@ -52,9 +53,16 @@ class SavedJobController extends Controller
             ['status' => ApplicationStatus::Saved],
         );
 
-        return back()->with('status', $savedJob->wasRecentlyCreated
-            ? 'Job saved to your list.'
-            : 'This job is already in your saved list.');
+        $message = $savedJob->wasRecentlyCreated ? 'Job saved to your list.' : 'This job is already in your saved list.';
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => $message,
+                'saved' => ['id' => $savedJob->id, 'status' => $savedJob->status->value],
+            ]);
+        }
+
+        return back()->with('status', $message);
     }
 
     public function update(Request $request, SavedJob $savedJob): RedirectResponse
@@ -70,11 +78,15 @@ class SavedJobController extends Controller
         return back()->with('status', 'Application status updated.');
     }
 
-    public function destroy(Request $request, SavedJob $savedJob): RedirectResponse
+    public function destroy(Request $request, SavedJob $savedJob): RedirectResponse|JsonResponse
     {
         $this->ensureOwnership($request, $savedJob);
 
         $savedJob->delete();
+
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Job removed from your saved list.', 'saved' => null]);
+        }
 
         return back()->with('status', 'Job removed from your saved list.');
     }

@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\PaymentStatus;
 use App\Http\Controllers\Controller;
+use App\Models\LlmUsageEvent;
 use App\Models\Payment;
 use App\Models\TailoredResume;
 use App\Models\User;
 use App\Services\GroqKeyPool;
 use App\Services\LlmUsageTracker;
 use App\Services\TrafficTracker;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -48,8 +51,9 @@ class DashboardController extends Controller
                 'keys' => count($keys->keys()),
                 'paused_keys' => collect($keys->statuses())->where('paused_seconds', '>', 0)->count(),
             ],
-            'trend' => $this->dailyTailoring(),
             'traffic' => $traffic->daily(self::TREND_DAYS),
+            'signups' => $this->dailySignups(),
+            'aiTrend' => $this->dailyAiRequests(),
             'recentUsers' => User::query()->latest()->limit(6)->get()
                 ->map(fn (User $user): array => [
                     'id' => $user->id,
@@ -71,23 +75,51 @@ class DashboardController extends Controller
     }
 
     /**
-     * Tailored resumes per day for the last two weeks, oldest first, with empty days filled in.
+     * New accounts per day for the last two weeks.
      *
      * @return array<int, array{date: string, count: int}>
      */
-    protected function dailyTailoring(): array
+    protected function dailySignups(): array
+    {
+        return $this->perDay(User::query(), fn (array $models): array => ['count' => count($models)]);
+    }
+
+    /**
+     * AI requests per day for the last two weeks, split into succeeded and failed.
+     *
+     * @return array<int, array{date: string, succeeded: int, failed: int}>
+     */
+    protected function dailyAiRequests(): array
+    {
+        return $this->perDay(LlmUsageEvent::query(), function (array $events): array {
+            $failed = collect($events)->where('status', '!=', 'success')->count();
+
+            return ['succeeded' => count($events) - $failed, 'failed' => $failed];
+        }, ['created_at', 'status']);
+    }
+
+    /**
+     * Groups a model's rows from the last two weeks by day, oldest first, with empty days filled in.
+     *
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @param  callable(array<int, TModel>): array<string, int>  $summarize
+     * @param  array<int, string>  $columns
+     * @return array<int, array<string, int|string>>
+     */
+    protected function perDay(Builder $query, callable $summarize, array $columns = ['created_at']): array
     {
         $since = now()->subDays(self::TREND_DAYS - 1)->startOfDay();
-        $counts = TailoredResume::query()
-            ->where('created_at', '>=', $since)
-            ->get(['created_at'])
-            ->countBy(fn (TailoredResume $resume): string => $resume->created_at->toDateString());
+        $byDay = $query->where('created_at', '>=', $since)
+            ->get($columns)
+            ->groupBy(fn (Model $model): string => $model->created_at->toDateString());
 
         return collect(range(0, self::TREND_DAYS - 1))
-            ->map(function (int $offset) use ($since, $counts): array {
+            ->map(function (int $offset) use ($since, $byDay, $summarize): array {
                 $date = Carbon::parse($since)->addDays($offset)->toDateString();
 
-                return ['date' => $date, 'count' => (int) ($counts[$date] ?? 0)];
+                return ['date' => $date, ...$summarize($byDay->get($date)?->all() ?? [])];
             })
             ->all();
     }

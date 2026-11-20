@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\HandleInertiaRequests;
 use App\Jobs\ComputeJobMatches;
 use App\Models\JobMatch;
 use App\Models\JobPosting;
@@ -29,11 +30,14 @@ class JobScanControllerTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Jobs/Index', false)
-                ->has('jobs.data', 1)
-                ->where('jobs.data.0.id', $posting->id)
-                ->where('jobs.data.0.match', null)
+                ->missing('jobs')
                 ->where('hasCv', false)
                 ->where('status', null)
+                ->loadDeferredProps(fn (Assert $reload) => $reload
+                    ->has('jobs.data', 1)
+                    ->where('jobs.data.0.id', $posting->id)
+                    ->where('jobs.data.0.match', null)
+                    ->where('jobs.total', 1))
             );
     }
 
@@ -58,12 +62,45 @@ class JobScanControllerTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->where('hasCv', true)
                 ->where('cvFilename', 'cv.docx')
-                ->where('jobs.data.0.match.score', 82)
-                ->where('jobs.data.0.match.matched_count', 1)
-                ->where('jobs.data.0.match.missing_count', 1)
-                ->where('jobs.data.0.match.required_total', 1)
-                ->where('jobs.data.0.match.required_matched', 1)
+                ->missing('jobs')
             );
+
+        // The deferred request the browser sends right after the page renders, in the same session.
+        $this->useSessionCv($sessionId, $hash)
+            ->withHeaders([
+                'X-Inertia' => 'true',
+                'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
+                'X-Inertia-Partial-Component' => 'Jobs/Index',
+                'X-Inertia-Partial-Data' => 'jobs',
+            ])
+            ->get('/jobs')
+            ->assertOk()
+            ->assertJsonPath('component', 'Jobs/Index')
+            ->assertJsonPath('props.jobs.data.0.match.score', 82)
+            ->assertJsonPath('props.jobs.data.0.match.matched_count', 1)
+            ->assertJsonPath('props.jobs.data.0.match.missing_count', 1)
+            ->assertJsonPath('props.jobs.data.0.match.required_total', 1)
+            ->assertJsonPath('props.jobs.data.0.match.required_matched', 1);
+    }
+
+    public function test_the_jobs_list_loads_page_by_page_for_infinite_scroll(): void
+    {
+        config(['job_scan.results_per_page' => 2]);
+        JobPosting::factory()->count(5)->create();
+
+        $this->get('/jobs')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->loadDeferredProps(fn (Assert $reload) => $reload
+                    ->has('jobs.data', 2)
+                    ->where('jobs.current_page', 1)
+                    ->where('jobs.total', 5)));
+
+        $this->get('/jobs?page=3')
+            ->assertInertia(fn (Assert $page) => $page
+                ->loadDeferredProps(fn (Assert $reload) => $reload
+                    ->has('jobs.data', 1)
+                    ->where('jobs.next_page_url', null)));
     }
 
     public function test_the_job_page_shows_details_and_the_match_report(): void

@@ -1,4 +1,4 @@
-import { Link, router, usePage } from '@inertiajs/react';
+import { Deferred, InfiniteScroll, Link, router, usePage } from '@inertiajs/react';
 import axios from 'axios';
 import React, { useEffect, useRef, useState } from 'react';
 import NavBar from '../../Components/NavBar';
@@ -9,6 +9,23 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'temporary', 'internship'];
 const POSTED_WITHIN = [1, 3, 7, 14, 30];
 const label = (value) => value.replace('_', ' ');
+
+/**
+ * Grey placeholder rows shown while jobs load (first batch and each next page).
+ */
+function JobRowSkeleton({ count = 3 }) {
+    return Array.from({ length: count }, (_, index) => (
+        <div key={index} className="rt-card rt-job-row rt-job-skeleton" aria-hidden="true">
+            <span className="rt-skeleton rt-skeleton-avatar"></span>
+            <div className="flex-grow-1">
+                <span className="rt-skeleton rt-skeleton-line" style={{ width: '55%' }}></span>
+                <span className="rt-skeleton rt-skeleton-line" style={{ width: '35%' }}></span>
+                <span className="rt-skeleton rt-skeleton-line rt-skeleton-thin" style={{ width: '70%' }}></span>
+            </div>
+            <span className="rt-skeleton rt-skeleton-ring"></span>
+        </div>
+    ));
+}
 
 const scoreTone = (score) => (score >= 75 ? 'success' : score >= 50 ? 'warning' : 'danger');
 
@@ -168,7 +185,7 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
         }
 
         const timer = setInterval(() => {
-            router.reload({ only: ['jobs', 'status'], preserveState: true, preserveScroll: true });
+            router.reload({ only: ['jobs', 'status'], reset: ['jobs'], preserveState: true, preserveScroll: true });
         }, 3000);
 
         return () => clearInterval(timer);
@@ -229,7 +246,7 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
             }
 
             await axios.post('/jobs/scan', formData, { headers: { Accept: 'application/json' } });
-            router.reload({ only: ['jobs', 'status', 'hasCv', 'cvFilename'], preserveState: true, preserveScroll: true });
+            router.reload({ only: ['jobs', 'status', 'hasCv', 'cvFilename'], reset: ['jobs'], preserveState: true, preserveScroll: true });
         } catch (err) {
             setError(errorMessage(err, 'Could not start the scan. Please try again.'));
             setIsScanning(false);
@@ -250,7 +267,7 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
 
     const visit = (query) => {
         const cleaned = Object.fromEntries(Object.entries(query).filter(([, value]) => value !== '' && value !== null && value !== 0 && value !== '0'));
-        router.get('/jobs', cleaned, { preserveState: true, preserveScroll: true, replace: true });
+        router.get('/jobs', cleaned, { preserveState: true, preserveScroll: true, replace: true, reset: ['jobs'] });
     };
 
     const applyFilters = (event) => {
@@ -293,17 +310,25 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
         });
     };
 
+    const [savedOverrides, setSavedOverrides] = useState({});
+    const savedState = (job) => (job.id in savedOverrides ? savedOverrides[job.id] : job.saved);
+
     const toggleSaved = (job) => {
         if (!user) {
             router.get('/login');
             return;
         }
 
-        if (job.saved) {
-            router.delete(`/saved-jobs/${job.saved.id}`, { preserveScroll: true });
-        } else {
-            router.post(`/jobs/${job.id}/save`, {}, { preserveScroll: true });
-        }
+        const saved = savedState(job);
+        setSavedOverrides((current) => ({ ...current, [job.id]: saved ? null : { id: null, status: 'saved' } }));
+
+        const request = saved?.id
+            ? axios.delete(`/saved-jobs/${saved.id}`, { headers: { Accept: 'application/json' } })
+            : axios.post(`/jobs/${job.id}/save`, {}, { headers: { Accept: 'application/json' } });
+
+        request
+            .then((response) => setSavedOverrides((current) => ({ ...current, [job.id]: response.data.saved })))
+            .catch(() => setSavedOverrides((current) => ({ ...current, [job.id]: saved })));
     };
 
     return (
@@ -454,7 +479,9 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
                     <div className="col-lg-8 col-xl-9 order-1 order-lg-2">
                         <div className="rt-card rt-jobs-toolbar mb-3">
                             <div>
-                                <span className="fw-bold">{jobs.total.toLocaleString()}</span> job{jobs.total === 1 ? '' : 's'}
+                                {jobs
+                                    ? <><span className="fw-bold">{jobs.total.toLocaleString()}</span> job{jobs.total === 1 ? '' : 's'}</>
+                                    : <span className="rt-skeleton rt-skeleton-line rt-skeleton-inline" aria-label="Loading jobs"></span>}
                                 {!hasCv && <a href="#your-cv" className="small ms-2"><i className="bi bi-info-circle me-1"></i>Upload your CV to see match scores</a>}
                             </div>
                             <div className="d-flex align-items-center gap-2">
@@ -480,78 +507,93 @@ export default function JobsIndex({ jobs, filters, status, hasCv, cvFilename, ca
 
                         <StatusBanner status={status} />
 
-                        {jobs.data.length === 0 ? (
-                            <section className="rt-card p-5 text-center">
-                                <span className="rt-stat-icon rt-tone-indigo mx-auto mb-3"><i className="bi bi-search"></i></span>
-                                <h3 className="h6 fw-bold">No jobs match these filters</h3>
-                                <p className="text-muted small mb-3">Try a broader keyword, clear the location, or remove a filter.</p>
-                                <Link href="/jobs" className="btn btn-sm btn-light border">Show all jobs</Link>
-                            </section>
-                        ) : (
-                            <div className="d-grid gap-3">
-                                {jobs.data.map((job) => (
-                                    <article key={job.id} className="rt-card rt-job-row">
-                                        <span className={`rt-company-avatar rt-tone-${avatarTone(job.company || job.title)}`} aria-hidden="true">
-                                            {(job.company || job.title || '?').trim().charAt(0).toUpperCase()}
-                                        </span>
-
-                                        <div className="flex-grow-1 min-w-0">
-                                            <h3 className="rt-job-title">
-                                                <Link href={job.url}>{job.title}</Link>
-                                            </h3>
-                                            <div className="rt-job-sub">
-                                                {job.company && <span className="fw-semibold">{job.company}</span>}
-                                                {job.location && <span><i className="bi bi-geo-alt"></i>{job.location}</span>}
-                                            </div>
-                                            <div className="rt-job-tags">
-                                                {job.is_remote && <span className="rt-job-tag is-remote"><i className="bi bi-house-door"></i>Remote</span>}
-                                                {job.employment_type && <span className="rt-job-tag text-capitalize">{label(job.employment_type)}</span>}
-                                                {formatSalary(job) && <span className="rt-job-tag"><i className="bi bi-cash-stack"></i>{formatSalary(job)}</span>}
-                                                {timeAgo(job.posted_at) && <span className="rt-job-tag"><i className="bi bi-clock"></i>{timeAgo(job.posted_at)}</span>}
-                                                <span className="rt-job-tag text-uppercase">{job.source}</span>
-                                            </div>
-                                            {job.match && (
-                                                <div className="rt-job-match">
-                                                    <span className="text-success"><i className="bi bi-check-circle-fill"></i>{job.match.matched_count} matched</span>
-                                                    <span className="text-danger"><i className="bi bi-x-circle-fill"></i>{job.match.missing_count} missing</span>
-                                                    {job.match.required_total > 0 && <span className="text-muted">{job.match.required_matched}/{job.match.required_total} required</span>}
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="rt-job-side">
-                                            {job.match ? <MatchRing match={job.match} /> : <span></span>}
-                                            <div className="d-flex gap-2">
-                                                <button
-                                                    type="button"
-                                                    className={`btn btn-sm ${job.saved ? 'btn-primary' : 'btn-light border'}`}
-                                                    onClick={() => toggleSaved(job)}
-                                                    title={job.saved ? 'Remove from saved jobs' : 'Save this job'}
-                                                >
-                                                    <i className={`bi ${job.saved ? 'bi-bookmark-fill' : 'bi-bookmark'}`}></i>
-                                                    <span className="visually-hidden">{job.saved ? 'Unsave job' : 'Save job'}</span>
+                        <Deferred data="jobs" fallback={<div className="d-grid gap-3"><JobRowSkeleton count={4} /></div>}>
+                            {() => (jobs.data.length === 0 ? (
+                                <section className="rt-card p-5 text-center">
+                                    <span className="rt-stat-icon rt-tone-indigo mx-auto mb-3"><i className="bi bi-search"></i></span>
+                                    <h3 className="h6 fw-bold">No jobs match these filters</h3>
+                                    <p className="text-muted small mb-3">Try a broader keyword, clear the location, or remove a filter.</p>
+                                    <Link href="/jobs" className="btn btn-sm btn-light border">Show all jobs</Link>
+                                </section>
+                            ) : (
+                                <InfiniteScroll
+                                    data="jobs"
+                                    preserveUrl
+                                    onlyNext
+                                    buffer={600}
+                                    manualAfter={5}
+                                    className="d-grid gap-3"
+                                    loading={<JobRowSkeleton count={2} />}
+                                    next={({ hasNext, loading, manualMode, fetch }) => {
+                                        if (loading) {
+                                            return null;
+                                        }
+                                        if (hasNext && manualMode) {
+                                            return (
+                                                <button type="button" className="btn rt-btn-soft w-100 py-2" onClick={fetch}>
+                                                    <i className="bi bi-arrow-down-circle me-1"></i>Load more jobs
                                                 </button>
-                                                <Link href={job.url} className="btn btn-sm rt-btn-soft text-nowrap">
-                                                    View <i className="bi bi-arrow-right ms-1"></i>
-                                                </Link>
-                                            </div>
-                                        </div>
-                                    </article>
-                                ))}
-                            </div>
-                        )}
+                                            );
+                                        }
+                                        return hasNext ? null : (
+                                            <p className="text-center text-muted small my-2">
+                                                <i className="bi bi-check2-circle me-1"></i>You have seen all {jobs.total.toLocaleString()} matching jobs.
+                                            </p>
+                                        );
+                                    }}
+                                >
+                                    {jobs.data.map((job) => (
+                                        <article key={job.id} className="rt-card rt-job-row">
+                                            <span className={`rt-company-avatar rt-tone-${avatarTone(job.company || job.title)}`} aria-hidden="true">
+                                                {(job.company || job.title || '?').trim().charAt(0).toUpperCase()}
+                                            </span>
 
-                        {jobs.last_page > 1 && (
-                            <nav className="d-flex justify-content-between align-items-center mt-4" aria-label="Job pagination">
-                                {jobs.prev_page_url
-                                    ? <Link href={jobs.prev_page_url} className="btn btn-sm btn-light border" preserveScroll={false}><i className="bi bi-arrow-left me-1"></i>Previous</Link>
-                                    : <span></span>}
-                                <span className="text-muted small">Page {jobs.current_page} of {jobs.last_page}</span>
-                                {jobs.next_page_url
-                                    ? <Link href={jobs.next_page_url} className="btn btn-sm btn-light border" preserveScroll={false}>Next<i className="bi bi-arrow-right ms-1"></i></Link>
-                                    : <span></span>}
-                            </nav>
-                        )}
+                                            <div className="flex-grow-1 min-w-0">
+                                                <h3 className="rt-job-title">
+                                                    <Link href={job.url}>{job.title}</Link>
+                                                </h3>
+                                                <div className="rt-job-sub">
+                                                    {job.company && <span className="fw-semibold">{job.company}</span>}
+                                                    {job.location && <span><i className="bi bi-geo-alt"></i>{job.location}</span>}
+                                                </div>
+                                                <div className="rt-job-tags">
+                                                    {job.is_remote && <span className="rt-job-tag is-remote"><i className="bi bi-house-door"></i>Remote</span>}
+                                                    {job.employment_type && <span className="rt-job-tag text-capitalize">{label(job.employment_type)}</span>}
+                                                    {formatSalary(job) && <span className="rt-job-tag"><i className="bi bi-cash-stack"></i>{formatSalary(job)}</span>}
+                                                    {timeAgo(job.posted_at) && <span className="rt-job-tag"><i className="bi bi-clock"></i>{timeAgo(job.posted_at)}</span>}
+                                                    <span className="rt-job-tag text-uppercase">{job.source}</span>
+                                                </div>
+                                                {job.match && (
+                                                    <div className="rt-job-match">
+                                                        <span className="text-success"><i className="bi bi-check-circle-fill"></i>{job.match.matched_count} matched</span>
+                                                        <span className="text-danger"><i className="bi bi-x-circle-fill"></i>{job.match.missing_count} missing</span>
+                                                        {job.match.required_total > 0 && <span className="text-muted">{job.match.required_matched}/{job.match.required_total} required</span>}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="rt-job-side">
+                                                {job.match ? <MatchRing match={job.match} /> : <span></span>}
+                                                <div className="d-flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        className={`btn btn-sm ${savedState(job) ? 'btn-primary' : 'btn-light border'}`}
+                                                        onClick={() => toggleSaved(job)}
+                                                        title={savedState(job) ? 'Remove from saved jobs' : 'Save this job'}
+                                                    >
+                                                        <i className={`bi ${savedState(job) ? 'bi-bookmark-fill' : 'bi-bookmark'}`}></i>
+                                                        <span className="visually-hidden">{savedState(job) ? 'Unsave job' : 'Save job'}</span>
+                                                    </button>
+                                                    <Link href={job.url} className="btn btn-sm rt-btn-soft text-nowrap">
+                                                        View <i className="bi bi-arrow-right ms-1"></i>
+                                                    </Link>
+                                                </div>
+                                            </div>
+                                        </article>
+                                    ))}
+                                </InfiniteScroll>
+                            ))}
+                        </Deferred>
                     </div>
                 </div>
             </div>

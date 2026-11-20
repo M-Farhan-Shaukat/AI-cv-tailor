@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\UserRole;
 use App\Models\GroqApiKey;
+use App\Models\LlmUsageEvent;
 use App\Models\TailoredResume;
 use App\Models\User;
 use App\Models\UserResume;
@@ -36,7 +37,26 @@ class AdminPanelTest extends TestCase
         $this->actingAs(User::factory()->admin()->create())
             ->get('/admin')
             ->assertOk()
-            ->assertInertia(fn (Assert $page) => $page->component('Admin/Dashboard', false)->has('stats')->has('trend', 14));
+            ->assertInertia(fn (Assert $page) => $page->component('Admin/Dashboard', false)->has('stats')->has('traffic', 14)->has('signups', 14)->has('aiTrend', 14));
+    }
+
+    public function test_the_dashboard_charts_count_signups_and_ai_requests_per_day(): void
+    {
+        $admin = User::factory()->admin()->create(['created_at' => now()->subDays(20)]);
+        User::factory()->count(2)->create();
+        User::factory()->create(['created_at' => now()->subDays(3)]);
+        LlmUsageEvent::factory()->count(3)->create();
+        LlmUsageEvent::factory()->failed()->create();
+        LlmUsageEvent::factory()->create(['created_at' => now()->subDays(30)]);
+
+        $this->actingAs($admin)
+            ->get('/admin')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('signups.13', ['date' => now()->toDateString(), 'count' => 2])
+                ->where('signups.10.count', 1)
+                ->where('aiTrend.13', ['date' => now()->toDateString(), 'succeeded' => 3, 'failed' => 1])
+                ->where('aiTrend.0.succeeded', 0));
     }
 
     public function test_configured_emails_are_always_super_admins(): void
